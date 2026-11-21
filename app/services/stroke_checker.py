@@ -24,7 +24,7 @@ from app.schemas import Canvas, CellError, Stroke, StrokeMapItem
 class StrokeCheckResult:
     """칸 하나의 획 판정 결과. 응답 CellResult의 strokePass·errors·strokeMap·durationMs로 그대로 들어간다."""
 
-    passed: bool
+    passed: bool  # 획순 오류(ORDER·DIRECTION·MISSING·EXTRA)가 없으면 True. BALANCE는 영향 없음
     errors: list[CellError] = field(default_factory=list)
     stroke_map: list[StrokeMapItem] = field(default_factory=list)
     duration_ms: float | None = None
@@ -309,7 +309,7 @@ def check_strokes(target: str, canvas: Canvas, strokes: list[Stroke]) -> StrokeC
     balance = stroke_balance.check(req, order["reference"], order["strokeMap"])
     errors = [CellError.model_validate(e) for e in order["errors"] + balance]
     return StrokeCheckResult(
-        passed=not errors,
+        passed=not order["errors"],  # 획순 오류만으로 판정. BALANCE는 errors에만 담고 통과 여부엔 영향 없음
         errors=errors,
         stroke_map=[StrokeMapItem.model_validate(m) for m in order["strokeMap"]],
         duration_ms=order["durationMs"],
