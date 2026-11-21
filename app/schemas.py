@@ -405,7 +405,12 @@ class GradeResponse(CamelModel):
     engine_version: str
     stage: Stage
     correct: bool = Field(description="글자 + 띄어쓰기가 모두 맞음 (획 제외)")
-    perfect: bool = Field(description="correct이고 mark가 stroke인 칸도 없음.")
+    perfect: bool = Field(
+        description=(
+            "correct이고, 획 판정을 해야 하는 칸(맞게 쓴 한글 칸)을 모두 판정했고 모두 통과(strokePass true)함. "
+            "균형(BALANCE)만 틀려도, 획 판정을 못 한 칸이 있어도 false"
+        )
+    )
     cells: list[CellResult]
     alignment: list[AlignmentItem] = Field(default_factory=list)
     words: list[WordResult] = Field(default_factory=list)
@@ -424,9 +429,10 @@ class ErrorCode(str, Enum):
 
     INVALID_JSON = "INVALID_JSON"  # 400: 본문이 JSON이 아님 (괄호·따옴표 등 문법 오류)
     INVALID_REQUEST = "INVALID_REQUEST"  # 422: JSON은 맞지만 요청 검사 규칙을 어김
-    NOT_FOUND = "NOT_FOUND"  # 404: 없는 주소
+    NOT_FOUND = "NOT_FOUND"  # 404: 없는 주소, 정답 획 데이터에 없는 글자 (/reference)
     METHOD_NOT_ALLOWED = "METHOD_NOT_ALLOWED"  # 405: 주소는 있는데 GET/POST가 다름
     INTERNAL_ERROR = "INTERNAL_ERROR"  # 500: 엔진 내부 오류 (다시 시도해 볼 수 있음)
+    REFERENCE_UNAVAILABLE = "REFERENCE_UNAVAILABLE"  # 503: 엔진에 정답 획 사전이 없음 (/reference, 엔진 설치 문제)
 
 
 class ErrorDetail(CamelModel):
@@ -448,7 +454,7 @@ class ErrorResponse(CamelModel):
 
 
 # =====================================================================
-# 정답 획 데이터 (엔진 안쪽: core/reference.py가 돌려주는 모양)
+# 정답 획: GET /reference/{글자} (core/reference.py가 돌려주는 모양 그대로)
 # =====================================================================
 
 
@@ -463,13 +469,21 @@ class ReferenceStroke(CamelModel):
     description: str | None = Field(default=None, description="획 설명 (예: '위 가로획을 왼쪽에서 오른쪽으로')")
 
 
+class ReferenceResponse(CamelModel):
+    """글자 하나의 정답 획 (초보 회색 가이드, 정답 리플레이). 정답 획은 엔진 버전이 바뀔 때만 바뀌어 캐시해도 된다."""
+
+    char: str = Field(description="요청한 글자 (한글 음절 또는 자모 하나)")
+    strokes: list[ReferenceStroke] = Field(description="쓰는 순서대로. 칸에 그릴 때 x * 칸너비, y * 칸높이")
+    engine_version: str
+
+
 # =====================================================================
 # 상태 확인: GET /health
 # =====================================================================
 
 
 class HealthResponse(CamelModel):
-    """엔진이 살아 있는지. 스프링부트는 engineVersion이 '-stub'으로 끝나면 임시 응답 중임을 알 수 있다."""
+    """엔진이 살아 있는지. 스프링부트는 engineVersion이 '-stub'으로 끝나면 판정 일부가 아직 임시임을 알 수 있다."""
 
     status: Literal["ok"] = "ok"
     engine_version: str

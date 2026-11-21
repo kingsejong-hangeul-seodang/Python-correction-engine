@@ -1,6 +1,6 @@
 """[혁윤] 한글 음절 분해/조합, 겹받침, 음절 구조 유형 (D-05).
 
-TODO: 한글 음절을 초성·중성·종성으로 나누고 겹받침과 음절 구조 유형을 알려 주는 함수를 만든다
+한글 음절을 초성·중성·종성으로 나누고 조합하며, 겹받침을 나누고 문장부호를 구분한다.
 
 입출력
 - 자모는 호환용 자모(ㄱ U+3131 ~ ㅣ U+3163)로 다룬다.
@@ -16,6 +16,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+_BASE, _LAST = 0xAC00, 0xD7A3  # 가, 힣
+CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+JUNG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"
+JONG = ("", *"ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ")
+PUNCTUATION = "?!.,"  # 정답 문장에 쓸 수 있는 문장부호 (schemas.TARGET_PATTERN과 같음)
+
+# 겹받침 → 앞 자음, 뒤 자음 (쓰는 순서)
+_COMPOUND_JONG = {
+    "ㄳ": ("ㄱ", "ㅅ"),
+    "ㄵ": ("ㄴ", "ㅈ"),
+    "ㄶ": ("ㄴ", "ㅎ"),
+    "ㄺ": ("ㄹ", "ㄱ"),
+    "ㄻ": ("ㄹ", "ㅁ"),
+    "ㄼ": ("ㄹ", "ㅂ"),
+    "ㄽ": ("ㄹ", "ㅅ"),
+    "ㄾ": ("ㄹ", "ㅌ"),
+    "ㄿ": ("ㄹ", "ㅍ"),
+    "ㅀ": ("ㄹ", "ㅎ"),
+    "ㅄ": ("ㅂ", "ㅅ"),
+}
+
 
 @dataclass(frozen=True)
 class Syllable:
@@ -28,34 +49,69 @@ class Syllable:
 
 def is_syllable(ch: str) -> bool:
     """완성형 한글 음절(가~힣)인지."""
-    raise NotImplementedError
+    return len(ch) == 1 and _BASE <= ord(ch) <= _LAST
 
 
 def is_jamo(ch: str) -> bool:
     """자모 단독(ㄱ~ㅣ)인지. 초보 자모 연습 칸."""
-    raise NotImplementedError
+    return len(ch) == 1 and "ㄱ" <= ch <= "ㅣ"
 
 
 def is_punctuation(ch: str) -> bool:
     """콘텐츠에 쓰는 문장부호(? ! . ,)인지."""
-    raise NotImplementedError
+    return len(ch) == 1 and ch in PUNCTUATION
 
 
 def decompose(ch: str) -> Syllable:
     """'닭' → Syllable('ㄷ', 'ㅏ', 'ㄺ'). 음절이 아니면 ValueError."""
-    raise NotImplementedError
+    if not is_syllable(ch):
+        raise ValueError(f"한글 음절이 아님: {ch!r}")
+    code = ord(ch) - _BASE
+    return Syllable(CHO[code // 588], JUNG[code // 28 % 21], JONG[code % 28])
 
 
 def compose(cho: str, jung: str, jong: str = "") -> str:
-    """('ㅌ', 'ㅏ') → '타'. 조합할 수 없으면 ValueError."""
-    raise NotImplementedError
+    """('ㅌ', 'ㅏ') → '타'. 조합할 수 없으면 ValueError.
+
+    조합할 수 없는 경우: 초성 자리에 초성으로 못 쓰는 자모(모음, 겹받침 'ㄺ'),
+    중성 자리에 모음이 아닌 것, 종성 자리에 받침으로 못 쓰는 자모('ㄸ' 'ㅃ' 'ㅉ', 모음).
+    """
+    # len 검사: 빈 문자열이나 'ㄱㄲ'처럼 여러 글자가 CHO 문자열 안에서 찾아지지 않게
+    if len(cho) != 1 or cho not in CHO:
+        raise ValueError(f"초성으로 쓸 수 없음: {cho!r}")
+    if len(jung) != 1 or jung not in JUNG:
+        raise ValueError(f"중성으로 쓸 수 없음: {jung!r}")
+    if jong not in JONG:
+        raise ValueError(f"종성으로 쓸 수 없음: {jong!r}")
+    code = (CHO.index(cho) * 21 + JUNG.index(jung)) * 28 + JONG.index(jong)
+    return chr(_BASE + code)
 
 
 def split_compound_jong(jong: str) -> tuple[str, ...]:
-    """겹받침을 둘로 나눈다. 'ㄺ' → ('ㄹ', 'ㄱ'), 'ㄱ' → ('ㄱ',), '' → ()."""
-    raise NotImplementedError
+    """겹받침을 둘로 나눈다. 'ㄺ' → ('ㄹ', 'ㄱ'), 'ㄱ' → ('ㄱ',), '' → ().
+
+    받침으로 쓸 수 없는 자모('ㄸ', 모음 등)면 ValueError.
+    """
+    if jong not in JONG:
+        raise ValueError(f"종성으로 쓸 수 없음: {jong!r}")
+    if jong in _COMPOUND_JONG:
+        return _COMPOUND_JONG[jong]
+    return (jong,) if jong else ()
+
+
+def last_jong(text: str) -> str:
+    """마지막 한글 글자의 받침 (문장부호 등은 건너뜀). 없으면 "". 조사 고르기용.
+
+    자모 하나는 이름의 끝소리로 본다: 자음(ㄷ 디귿, ㄹ 리을)은 그 자음, 모음(ㅏ 아)은 "".
+    """
+    for ch in reversed(text):
+        if is_syllable(ch):
+            return decompose(ch).jong
+        if is_jamo(ch):
+            return "" if ch in JUNG else ch
+    return ""
 
 
 def has_batchim(text: str) -> bool:
     """마지막 한글 글자에 받침이 있는지 (문장부호는 건너뜀). 조사 고르기용."""
-    raise NotImplementedError
+    return last_jong(text) != ""
