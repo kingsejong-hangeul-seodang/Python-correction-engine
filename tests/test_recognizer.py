@@ -74,9 +74,24 @@ def test_short_tail_scores_comma_higher_than_period():
 
 
 def test_dot_without_punctuation_in_target_has_no_candidates():
-    """정답에 . , 가 없으면 후보 없음 → 줄 맞춤이 '실수로 찍은 점'으로 본다."""
-    rec = recognize(cell_of([[(0.5, 0.5)]]), CANVAS, ["가", "?"])
+    """정답에 . , 가 없고 어떤 글자와도 닮지 않은 점 → 후보 없음 → 줄 맞춤이 '실수로 찍은 점'으로 본다."""
+    rec = recognize(cell_of([[(0.5, 0.5)]]), CANVAS, ["?", "!"])
     assert rec.kind == CellKind.MARK and rec.candidates == []
+
+
+@needs_data
+def test_dot_is_not_read_as_a_letter():
+    rec = recognize(cell_of([[(0.5, 0.5)]]), CANVAS, ["가"])
+    assert rec.kind == CellKind.MARK and rec.candidates == []
+
+
+@needs_data
+@pytest.mark.parametrize("char", ["ㅡ", "ㅣ", "고"])
+def test_small_letter_is_still_a_letter(char):
+    """칸에 아주 작게 써도(칸의 1/5) 정답에 . , 가 없으면 점이 아니라 글자로 본다."""
+    small = [[(0.5 + (x - 0.5) * 0.2, 0.5 + (y - 0.5) * 0.2) for x, y in s] for s in handwritten(char, seed=1)]
+    rec = recognize(cell_of(small), CANVAS, [char])
+    assert rec.kind == CellKind.CHAR and rec.accepts(char)
 
 
 def test_question_and_exclamation_marks_without_reference_data():

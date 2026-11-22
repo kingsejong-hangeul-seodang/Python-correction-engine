@@ -111,9 +111,12 @@ def sejong_line(req: GradeRequest, result: AggregateResult) -> SejongMessage | N
         f"Language: {language}\nTarget sentence: {req.target}\nResult: {_RESULT[result.correct]}\nMistakes:\n"
         + "\n".join(f"- {m}" for m in mistakes)
     )
+    future = _pool.submit(_ask, prompt)
     try:
-        bubble = _pool.submit(_ask, prompt).result(timeout=config.LLM_TIMEOUT_MS / 1000)
+        bubble = future.result(timeout=config.LLM_TIMEOUT_MS / 1000)
     except WaitTimeout:
+        # 아직 줄 서 있던 호출은 취소한다 (아무도 안 볼 답에 Gemini 사용량을 쓰지 않게). 이미 보낸 호출은 못 멈춘다
+        future.cancel()
         log.warning("LLM 말풍선이 %dms 안에 오지 않아 템플릿을 씀", config.LLM_TIMEOUT_MS)
         return None
     except Exception as e:  # 키 오류·결제·네트워크 등: 화면은 템플릿으로. 이유(Google 오류 문장)도 남긴다

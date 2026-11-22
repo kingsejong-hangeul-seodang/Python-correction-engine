@@ -210,6 +210,30 @@ def test_slow_llm_is_not_waited_for(monkeypatch):
     assert time.time() - start < 0.9  # 1초짜리 답을 기다리지 않음
 
 
+def test_queued_llm_call_is_cancelled_after_timeout(monkeypatch):
+    """Gemini가 밀려 줄 서 있던 호출은 시간이 지나면 취소한다 (아무도 안 볼 답에 사용량을 쓰지 않게)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from app import config
+    from app.services import llm_feedback
+
+    calls = []
+    release = Event()
+    busy = ThreadPoolExecutor(max_workers=1)
+    busy.submit(release.wait, 5)  # 일꾼 하나가 이미 다른 요청으로 바쁨 (release할 때까지)
+    monkeypatch.setattr(llm_feedback, "_pool", busy)
+    monkeypatch.setattr(llm_feedback, "_ask", lambda prompt: calls.append(prompt))
+    monkeypatch.setattr(config, "LLM_TIMEOUT_MS", 50)
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    assume_target_written(monkeypatch)
+    sejong = client.post("/grade", json=load_request("advanced")).json()["sejong"]
+    release.set()
+    busy.shutdown(wait=True)
+    assert sejong["source"] == "template"
+    assert calls == []  # 줄 서 있던 호출은 일꾼이 비어도 실행되지 않음
+
+
 def test_gemini_client_timeout_is_at_least_server_minimum(monkeypatch):
     """Gemini 서버는 10초보다 짧은 제한을 400으로 거절한다. 클라이언트 제한은 늘 10초 이상."""
     from app import config

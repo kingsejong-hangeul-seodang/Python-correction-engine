@@ -8,6 +8,8 @@
 
 방식
 - 칸 종류: 획이 없으면 EMPTY, 쓴 자국 전체가 칸의 MARK_MAX_SIZE보다 작으면 MARK(점·쉼표), 나머지는 CHAR.
+    단 정답에 . , 가 없으면 작은 자국도 글자로 비교해 본다 (작게 쓴 'ㅡ' 같은 글자가 점이 되지 않게).
+    어떤 글자와도 닮지 않았을 때만 MARK(실수로 찍은 점, 후보 없음)로 둔다.
 - CHAR: 학습자 획과 정답 획(core/reference.py)을 64×64 그림으로 그려 모양만 비교한다. 획순은 보지 않는다.
     - 쓴 위치·크기는 보지 않는다 (둘 다 무게중심과 퍼진 정도를 맞춤, 가로세로 비율은 유지).
       위치·크기는 획 판정의 균형(BALANCE)이 본다.
@@ -116,7 +118,8 @@ def recognize(cell: Cell, canvas: Canvas, expected: list[str]) -> Recognition:
     strokes = [np.asarray(s.points, dtype=float)[:, :2] / [canvas.w, canvas.h] for s in cell.strokes]
     targets = list(dict.fromkeys(ch for ch in expected if ch != " "))
 
-    if _size(strokes) < MARK_MAX_SIZE:
+    small = _size(strokes) < MARK_MAX_SIZE
+    if small and any(t in ".," for t in targets):
         return Recognition(cell_index=cell.index, kind=CellKind.MARK, candidates=_mark_candidates(strokes, targets))
 
     user = _Image.of(strokes)
@@ -130,6 +133,9 @@ def recognize(cell: Cell, canvas: Canvas, expected: list[str]) -> Recognition:
     in_targets = set(targets)
     scored.sort(key=lambda sc: (-sc[0], sc[1] not in in_targets))  # sort는 안정 정렬: 그다음은 후보를 만든 순서
     candidates = [Candidate(char=c, score=s) for s, c in scored[:MAX_CANDIDATES]]
+    if small and not any(c.score >= MIN_ACCEPT_SCORE for c in candidates):
+        # 작게 쓴 자국이 어떤 글자와도 닮지 않음 → 실수로 찍은 점 (정답에 . , 가 없으니 후보 없음)
+        return Recognition(cell_index=cell.index, kind=CellKind.MARK, candidates=[])
     return Recognition(cell_index=cell.index, kind=CellKind.CHAR, candidates=candidates)
 
 
