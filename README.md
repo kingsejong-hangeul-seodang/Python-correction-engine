@@ -156,7 +156,7 @@ tests/
 | ⑤ 설명 | `explanations` | `services/feedback_templates.py` | 혁윤 | 요청, ④ 결과 | 설명 문장 목록 |
 | ⑥ 말풍선 | `sejong_message` / `sejong_line` | `feedback_templates.py` / `llm_feedback.py` | 혁윤 | 요청, ④ 결과 | 킹세종 말풍선 (LLM이 실패하면 템플릿) |
 
-①과 ③은 정답 획 데이터를 `core/reference.py`의 `get_reference(글자)`로 꺼내 씁니다. 함수 이름이나 매개변수를 바꾸면 `tests/test_interfaces.py`가 알려 주니, 바꿀 때는 이 표와 테스트를 같이 고치세요.
+①과 ③은 정답 획 데이터를 `core/reference.py`의 `get_reference(글자)`로 꺼내 씁니다 (`font`를 생략하면 기본 폰트, 다른 폰트는 필기 테스트용). 함수 이름이나 매개변수를 바꾸면 `tests/test_interfaces.py`가 알려 주니, 바꿀 때는 이 표와 테스트를 같이 고치세요.
 
 ## 실행
 
@@ -200,7 +200,7 @@ GitHub에 push하거나 PR을 올리면 `.github/workflows/ci.yml`이 위 네 �
 ```bash
 # 만들기
 python -m app.core.stroke_vectorizer.extract                             # 기본 폰트 전 과정
-python -m app.core.stroke_vectorizer.extract --font DONGGUK-UNIVERSITY    # 다른 폰트 (data/fonts/에 넣은 뒤)
+python -m app.core.stroke_vectorizer.extract --font DONGGUK-UNIVERSITY --hook-len 22  # 다른 폰트 (data/fonts/에 넣은 뒤)
 python -m app.core.stroke_vectorizer.extract --steps table,mode           # 일부 단계만 (jamo,syllables,table,mode)
 python -m app.core.stroke_vectorizer.compose --all                      # 정답 획 사전 → data/extracted/<폰트 id>/composed_all.json
 python -m app.core.stroke_vectorizer.editor                               # 수동 조정 편집기 → http://localhost:8765
