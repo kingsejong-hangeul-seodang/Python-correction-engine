@@ -11,4 +11,5 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 LLM_MODEL = os.getenv(
     "LLM_MODEL", "gemini-3.5-flash-lite"
 )  # 무료 등급이 있는 Flash-Lite (2026-11 확인). 바꾸려면 이름을 넣는다
-LLM_TIMEOUT_MS = int(os.getenv("LLM_TIMEOUT_MS", "3000"))  # 이 시간 안에 답이 없으면 템플릿 말풍선
+# 이 시간 안에 Gemini 답이 없으면 템플릿 말풍선. Gemini가 붐비면 3초를 넘기도 해서 10초로 둔다
+LLM_TIMEOUT_MS = int(os.getenv("LLM_TIMEOUT_MS", "10000"))
