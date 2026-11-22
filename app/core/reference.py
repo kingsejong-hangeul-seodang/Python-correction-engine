@@ -7,7 +7,7 @@
 - 처음 부를 때 한 번 읽어 두고, 이후에는 사전에서 찾기만 한다 (서버는 compose()를 부르지 않음)
 
 입출력 (정진님 명세 5번 compose() 출력과 같은 모양)
-- 입력: 글자 하나 (음절, 초보용 자모 단독)
+- 입력: 글자 하나 (음절, 초보용 자모 단독), font (생략 = 기본 폰트, 다른 폰트는 필기 테스트용)
 - 출력: ReferenceStroke 목록, order 순서 = 쓰는 순서
     order      : 글자 전체 기준 획 번호, 1부터
     jamo, role : 소속 자모와 자리 (cho / jung / jong)
@@ -30,22 +30,23 @@ from app.schemas import ReferenceStroke
 
 
 @cache
-def _table() -> dict[str, list[dict[str, Any]]]:
-    """정답 획 사전 (글자 → compose 형식 획 목록). 처음 한 번만 파일에서 읽는다."""
-    path = composed_path()
+def _table(font: str | None = None) -> dict[str, list[dict[str, Any]]]:
+    """정답 획 사전 (글자 → compose 형식 획 목록). 폰트마다 처음 한 번만 파일에서 읽는다. None = 기본 폰트."""
+    path = composed_path(font)
     if not path.exists():
+        font_opt = f" --font {font}" if font else ""
         raise FileNotFoundError(
             f"정답 획 사전이 없어요 ({relative_to_root(path)}). "
-            "먼저 실행: python -m app.core.stroke_vectorizer.compose --all"
+            f"먼저 실행: python -m app.core.stroke_vectorizer.compose --all{font_opt}"
         )
     with open(path, encoding="utf-8") as f:
         table: dict[str, list[dict[str, Any]]] = json.load(f)
     return table
 
 
-def get_reference(char: str) -> list[ReferenceStroke]:
-    """글자 하나의 정답 획. 데이터에 없는 글자면 KeyError."""
-    strokes = sorted(_table()[char], key=lambda s: s["order"])
+def get_reference(char: str, font: str | None = None) -> list[ReferenceStroke]:
+    """글자 하나의 정답 획. 데이터에 없는 글자면 KeyError. font: None = 기본 폰트 (서버는 항상 기본)"""
+    strokes = sorted(_table(font)[char], key=lambda s: s["order"])
     seen: dict[tuple[str, str], int] = {}
     out = []
     for s in strokes:
@@ -63,6 +64,6 @@ def get_reference(char: str) -> list[ReferenceStroke]:
     return out
 
 
-def has_reference(char: str) -> bool:
+def has_reference(char: str, font: str | None = None) -> bool:
     """정답 획 데이터가 있는 글자인지 (인식 후보를 고를 때 사용)."""
-    return char in _table()
+    return char in _table(font)

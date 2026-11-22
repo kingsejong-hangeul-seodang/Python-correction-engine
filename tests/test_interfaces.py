@@ -12,8 +12,8 @@ from app.core import hangul, reference
 from app.services import aggregate, feedback_templates, llm_feedback, recognizer, spacing_align, stroke_checker
 
 EXPECTED = [
-    (reference.get_reference, ["char"]),
-    (reference.has_reference, ["char"]),
+    (reference.get_reference, ["char", "font"]),
+    (reference.has_reference, ["char", "font"]),
     (hangul.decompose, ["ch"]),
     (hangul.compose, ["cho", "jung", "jong"]),
     (recognizer.recognize, ["cell", "canvas", "expected"]),
