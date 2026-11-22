@@ -5,6 +5,8 @@
 
 화면에서 획을 고르고 점을 끌어 옮긴 뒤 저장하면 data/extracted/<폰트>/tweaks.json에 이동량이 저장된다.
 범위: "이 글자만" 또는 "같은 자리 전체"(예: 받침 있는 ㅝ 전부). 반영 방식: docs/extracted_data.md
+"자모 모양 그대로 쓰기": 그 자모를 모든 글자에서 자모 단독 모양 그대로 자리 박스에 넣는다
+(tweaks.json "mode", 체크하면 바로 저장)
 다 고친 뒤 python -m app.core.stroke_vectorizer.compose --all 로 정답 획 사전을 다시 만들어야 서버에 반영된다.
 """
 
@@ -19,8 +21,11 @@ from app.core.stroke_vectorizer.compose import (
     Profile,
     compose,
     deltas_for,
+    fixed_mode,
     get_profile,
     set_delta,
+    set_fixed_mode,
+    slot_jamo,
     sub_base,
     tweak_summary,
 )
@@ -38,12 +43,18 @@ def slot_of(syl):
 
 
 def syl_view(prof, syl):
-    """편집용: 획마다 base(①② 결과) + 자리 조정 + 글자 조정"""
-    strokes = compose(syl, prof.id, meta=True, use_tweaks=False)
+    """편집용: 획마다 base(①② 결과, 자모 방식 고정 반영) + 자리 조정 + 글자 조정"""
+    strokes = compose(syl, prof.id, meta=True, use_tweaks=False, use_fixed_mode=True)
     for s in strokes:
         s["slot_d"], s["syl_d"] = deltas_for(prof.tweaks, s["slot"], s["idx"], syl, s["order"])
+        s["fixed"] = fixed_mode(prof.tweaks, s["jamo"]) == "jamo"
         del s["points"]
     return {"syl": syl, "strokes": strokes}
+
+
+def slot_tweaks_of(prof, jamo):
+    """그 자모의 자리 조정(점 이동량)이 있는 자리 id들"""
+    return [k for k in prof.tweaks.get("slot", {}) if slot_jamo(k) == jamo]
 
 
 def same_slot(slot, n, exclude):
@@ -102,6 +113,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send({"chars": "".join(chars), "total": total})
             elif u.path == "/api/tweaks":
                 self.send(tweak_summary(p.tweaks))
+            elif u.path == "/api/slot_tweaks":
+                self.send({"slots": slot_tweaks_of(p, q["jamo"])})
             else:
                 self.send({"error": "not found"}, code=404)
         except Exception as e:  # noqa: BLE001
@@ -125,6 +138,15 @@ class Handler(BaseHTTPRequestHandler):
                         set_delta(p.tweaks, "syllable", syl, s["order"], e["syl_d"] or [[0, 0]])
                 p.save_tweaks()
                 self.send(syl_view(p, syl))
+            elif u.path == "/api/mode":
+                # body: {"syl", "jamo", "fixed": bool, "clear_slot": bool} → 자모 방식 고정/해제, 바로 저장
+                jamo = body["jamo"]
+                set_fixed_mode(p.tweaks, jamo, "jamo" if body["fixed"] else None)
+                if body.get("clear_slot"):  # 기준 모양이 바뀌어 기존 자리 이동량이 어긋나므로
+                    for k in slot_tweaks_of(p, jamo):
+                        del p.tweaks["slot"][k]
+                p.save_tweaks()
+                self.send(syl_view(p, body["syl"]))
             else:
                 self.send({"error": "not found"}, code=404)
         except Exception as e:  # noqa: BLE001

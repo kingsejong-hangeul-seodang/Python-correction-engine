@@ -66,6 +66,11 @@
     <div id="strokeList"></div>
     <div class="info" id="selInfo"></div>
     <div class="info">
+      <label title="이 자모가 들어간 모든 글자·자리에서 자모 단독 모양을 자리 박스에 그대로 넣습니다 (누르면 바로 저장)">
+        <input id="fixedMode" type="checkbox"> <b id="fixedJamo"></b> 자모 모양 그대로 쓰기 (모든 글자)
+      </label>
+    </div>
+    <div class="info">
       획 번호를 눌러 고르고 점(○)을 끌어 옮깁니다. 회색 점선 = 측정값(조정 전).
       방향키로 마지막에 누른 점을 미세 이동(<kbd>Shift</kbd> = 크게).
       <b>이 글자만</b>: 이 글자에만 적용 / <b>같은 자리 전체</b>: 같은 자리(예: 받침 있는 ㅝ)의 같은 획 모두에 적용.
@@ -184,6 +189,25 @@ function renderStrokeList() {
   $("selInfo").innerHTML = s
     ? `선택: <b>${s.order}획</b> (${s.jamo} ${({cho:"초성",jung:"중성",jong:"종성"})[s.role]}, 자모 안 ${s.idx + 1}번째 획) · 자리 <b>${s.slot}</b> · 박스 ${s.key}`
     : "획을 고르세요.";
+  $("fixedJamo").textContent = s ? s.jamo : "";
+  $("fixedMode").disabled = !s;
+  $("fixedMode").checked = !!(s && s.fixed);
+}
+
+async function toggleFixedMode() {
+  const s = data.strokes.find(s => s.order === sel), fixed = $("fixedMode").checked;
+  if (!s) return;
+  if (dirty.size && !confirm("저장하지 않은 점 조정이 있습니다. 버리고 바꿀까요?")) { render(); return; }
+  let clear = false;
+  if (fixed) {
+    const r = await api(`/api/slot_tweaks?jamo=${encodeURIComponent(s.jamo)}`);
+    if (r.slots.length)
+      clear = confirm(`${s.jamo}의 자리 점 조정 ${r.slots.length}개(${r.slots.join(", ")})는 기준 모양이 바뀌어 어긋납니다. 지울까요?\n(취소 = 남겨 둠)`);
+  }
+  data = await api("/api/mode", {syl: data.syl, jamo: s.jamo, fixed, clear_slot: clear});
+  work = {}; dirty.clear(); undoStack = [];
+  for (const t of data.strokes) work[t.order] = {slot_d: clone(t.slot_d || zeros()), syl_d: clone(t.syl_d || zeros())};
+  await selectStroke(sel); renderTweaks();
 }
 
 function renderPreviews() {
@@ -214,8 +238,9 @@ function renderStatus() {
 
 async function renderTweaks() {
   const t = await api("/api/tweaks");
-  const syl = Object.keys(t.syllable), slot = Object.keys(t.slot);
+  const syl = Object.keys(t.syllable), slot = Object.keys(t.slot), fixed = Object.keys(t.mode || {});
   $("tweakList").innerHTML =
+    `<div>자모 모양 그대로: ${fixed.join(" ") || "-"}</div>` +
     `<div>글자 ${syl.length}개: ${syl.map(c => `<span data-c="${c}">${c}</span>`).join("") || "-"}</div>` +
     `<div>자리 ${slot.length}개: ${slot.map(k => `<span data-slot="${k}">${k} (${t.slot[k].map(i => +i + 1).join(",")}획)</span>`).join("") || "-"}</div>`;
   $("tweakList").querySelectorAll("span[data-c]").forEach(e => e.onclick = () => load(e.dataset.c));
@@ -287,6 +312,7 @@ $("loadBtn").onclick = () => load($("charInput").value);
 $("charInput").onkeydown = e => { if (e.key === "Enter") load(e.target.value); };
 $("radius").oninput = e => $("radiusVal").textContent = e.target.value;
 $("saveBtn").onclick = save;
+$("fixedMode").onchange = toggleFixedMode;
 $("undoBtn").onclick = () => { const u = undoStack.pop(); if (u) { work = u.work; dirty = new Set(u.dirty); render(); } };
 $("clearBtn").onclick = () => { if (sel == null) return; pushUndo(); work[sel][key()] = zeros(); dirty.add(sel); render(); };
 document.querySelectorAll("input[name=scope]").forEach(r => r.onchange = render);

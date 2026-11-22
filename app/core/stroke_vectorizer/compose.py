@@ -172,7 +172,7 @@ class Profile:
 
     def save_tweaks(self):
         """획 하나(32점 이동량)를 한 줄로 — 사람이 열어 봐도 읽히게"""
-        lines = ["{"]
+        lines = ["{", f' "mode": {json.dumps(self.tweaks.get("mode", {}), ensure_ascii=False)},']
         for si, scope in enumerate(("slot", "syllable")):
             table = self.tweaks.get(scope, {})
             lines.append(f' "{scope}": {{')
@@ -297,10 +297,33 @@ def lookup_strokes(detail, role, jamo, jung, has_jong, n_strokes):
 #   slot      같은 자리 전체 — 자리 id(sub_base, 예: jung|ㅝ|1 = 받침 있는 ㅝ)의 자모 안 획 번호마다
 #   syllable  그 글자만 — 글자의 획 순서(order)마다
 # 형식:
-#   {"slot":     {"jung|ㅝ|1": {"2": [[dx, dy] × 32]}},
+#   {"mode":     {"ㅊ": "jamo"},
+#    "slot":     {"jung|ㅝ|1": {"2": [[dx, dy] × 32]}},
 #    "syllable": {"뒁": {"5": [[dx, dy] × 32]}}}
 # 같은 획에 둘 다 있으면 둘 다 더한다 (자리 조정 + 글자 조정).
+# mode: 자모별 방식 고정 (box_mode.json보다 우선). "jamo" = 자모 단독 모양을 자리 박스에 그대로
+#   음절 추출이 틀어져 획 박스가 엉망인 자모(동국체 ㅊ·ㅂ 등)에 쓴다. 그 자모가 들어간 모든 글자·자리에 적용
 EPS = 1e-4  # 이보다 작은 이동은 0으로 보고 저장하지 않음
+
+
+def fixed_mode(tweaks, jamo):
+    """editor로 고정한 자모 방식 (없으면 None)"""
+    return tweaks.get("mode", {}).get(jamo)
+
+
+def set_fixed_mode(tweaks, jamo, mode):
+    """mode=None이면 고정 해제"""
+    table = tweaks.setdefault("mode", {})
+    if mode is None:
+        table.pop(jamo, None)
+    else:
+        table[jamo] = mode
+
+
+def slot_jamo(slot):
+    """자리 id → 그 자리의 자모 (cho|ㅏ|0|ㅊ → ㅊ, jung|ㅝ|1 → ㅝ, jong|H|ㅂ → ㅂ)"""
+    parts = slot.split("|")
+    return parts[1] if parts[0] == "jung" else parts[-1]
 
 
 def deltas_for(tweaks, slot, idx, syl, order):
@@ -332,7 +355,11 @@ def set_delta(tweaks, scope, key, idx, deltas):
 
 
 def tweak_summary(tweaks):
-    return {scope: {k: sorted(v, key=int) for k, v in tweaks.get(scope, {}).items()} for scope in ("slot", "syllable")}
+    out: dict[str, Any] = {
+        scope: {k: sorted(v, key=int) for k, v in tweaks.get(scope, {}).items()} for scope in ("slot", "syllable")
+    }
+    out["mode"] = dict(tweaks.get("mode", {}))
+    return out
 
 
 # ═════════ 조합 ═════════
@@ -347,7 +374,8 @@ def to_box(pts_list, box, flat=None):
 
 
 def place_jamo(prof, role, jamo, jung, has_jong, mode=None, slots=None, detail=None):
-    """자모 하나를 자리에 놓기 (①②) → [(점들, 키)]"""
+    """자모 하나를 자리에 놓기 (①②) → [(점들, 키)]
+    mode: None = box_mode.json"""
     slots = prof.slots if slots is None else slots
     detail = prof.detail if detail is None else detail
     strokes = prof.jamo[jamo]
@@ -370,18 +398,22 @@ def place_jamo(prof, role, jamo, jung, has_jong, mode=None, slots=None, detail=N
     return [(q, k) for q in to_box(raw, box)]
 
 
-def compose(syl, font=None, mode=None, use_tweaks=True, meta=False, slots=None, detail=None):
+def compose(syl, font=None, mode=None, use_tweaks=True, meta=False, slots=None, detail=None, use_fixed_mode=None):
     """음절 → [{"order", "jamo", "role", "points"}] (0~1 글자 프레임)
     mode: None = 자모마다 box_mode / "jamo"·"piece"·"stroke" 고정 (평가용)
-    meta=True: 획마다 key(쓴 박스), slot(자리 id), idx(자모 안 획 번호), base(③ 전 점)도 넣음
+    use_tweaks: ③ 점 이동량 / use_fixed_mode: ③ 자모 방식 고정 (None = use_tweaks와 같게)
+    meta=True: 획마다 key(쓴 박스), slot(자리 id), idx(자모 안 획 번호), base(③ 점 이동 전 점)도 넣음
     slots·detail: 다른 배치표로 시험할 때 (평가용)"""
     prof = get_profile(font)
+    if use_fixed_mode is None:
+        use_fixed_mode = use_tweaks
     parts = decompose(syl)
     jung, has_jong = parts[1][1], len(parts) == 3
     out: list[dict[str, Any]] = []
     for role, jamo in parts:
         slot = sub_base(role, jamo, jung, has_jong)
-        placed = place_jamo(prof, role, jamo, jung, has_jong, mode, slots, detail)
+        m = mode or (fixed_mode(prof.tweaks, jamo) if use_fixed_mode else None)
+        placed = place_jamo(prof, role, jamo, jung, has_jong, m, slots, detail)
         for idx, (pts, key) in enumerate(placed):
             order = len(out) + 1
             final = pts
@@ -473,7 +505,9 @@ def draw(chars, out=OUTPUTS_DIR / "compose.png", cols=10, font=None, use_tweaks=
             ax.add_patch(g)
         strokes = compose(syl, font, use_tweaks=use_tweaks, meta=True)
         fb = any(is_fallback(s["key"]) for s in strokes)
-        tw = use_tweaks and any(s["points"] != s["base"] for s in strokes)
+        tw = use_tweaks and (
+            any(s["points"] != s["base"] for s in strokes) or any(fixed_mode(prof.tweaks, s["jamo"]) for s in strokes)
+        )
         ax.set_title(
             syl + (" (fb)" if fb else "") + (" (조정)" if tw else ""), fontsize=11, color="tab:blue" if fb else "black"
         )
@@ -510,7 +544,7 @@ if __name__ == "__main__":
     ap.add_argument("--full", action="store_true", help="무작위 그림을 11,172자 중에서 (기본 완성형 2,350자)")
     ap.add_argument("--n", type=int, default=50, help="글자 안 주면 무작위 N자")
     ap.add_argument("--seed", type=int, default=None, help="무작위 시드 (안 주면 매번 다름)")
-    ap.add_argument("--no-tweaks", action="store_true", help="③ 수동 조정 빼고")
+    ap.add_argument("--no-tweaks", action="store_true", help="③ 수동 조정(점 이동·자모 방식 고정) 빼고")
     ap.add_argument("--cols", type=int, default=10)
     ap.add_argument("--out", default=str(OUTPUTS_DIR / "compose.png"))
     args = ap.parse_args()
