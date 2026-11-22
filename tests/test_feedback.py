@@ -37,11 +37,13 @@ def test_explanations_match_figma_example(stage):
 # ----------------------------------------------------------------- 고수: 여러 경우
 
 
-def _advanced(target: str, written: str, locale: Locale = Locale.KO):
+def _advanced(target: str, written: str, locale: Locale = Locale.KO, also: dict[int, str] | None = None):
     """written: 칸마다 쓴 글자 ('_' = 빈 칸). 쓴 글자를 그대로 인식했다고 본다.
 
+    also: {칸: 글자} 그 칸은 이 글자를 1순위로, 쓴 글자를 2순위 후보로 인식 (비슷한 글자로 본 경우).
     고수 요청은 칸이 정답 길이 이상이어야 해서 뒤를 빈 칸으로 채운다 (다 쓴 뒤 빈 칸은 무시됨).
     """
+    also = also or {}
     written += "_" * max(0, len(target) - len(written))
     data = load_request("advanced")
     data.update(target=target, locale=locale.value)
@@ -53,7 +55,11 @@ def _advanced(target: str, written: str, locale: Locale = Locale.KO):
     recs = [
         Recognition(cell_index=i, kind=CellKind.EMPTY, candidates=[])
         if ch == "_"
-        else Recognition(cell_index=i, kind=CellKind.CHAR, candidates=[Candidate(ch, 0.95)])
+        else Recognition(
+            cell_index=i,
+            kind=CellKind.CHAR,
+            candidates=[Candidate(also[i], 0.95), Candidate(ch, 0.9)] if i in also else [Candidate(ch, 0.95)],
+        )
         for i, ch in enumerate(written)
     ]
     result = aggregate(req, recs, spacing_align.align(req.target, Stage.ADVANCED, recs), {})
@@ -89,6 +95,11 @@ def test_char_and_spacing_lines_in_sentence_order():
         "나너는 나 너로 띄어 써요.",
         "밤이라고 쓰셨는데 밥이라고 써야 해요.",
     ]
+
+
+def test_chars_accepted_as_correct_are_shown_as_the_target_char():
+    """보를 포로, 고를 교로 1순위 인식했어도 정답 글자로 인정했으면 설명에는 보고로 나온다 (웹 패드에서 찾은 경우)."""
+    assert texts(_advanced("보고 싶어", "보고싶어", also={0: "포", 1: "교"})) == ["보고싶어는 보고 싶어로 띄어 써요."]
 
 
 def test_all_correct_has_no_lines():

@@ -59,7 +59,11 @@ def explanations(req: GradeRequest, result: AggregateResult) -> list[Explanation
         if it.cell_index is not None and it.cell_index not in blank and (ow := owner(k)) is not None:
             word_cells.setdefault(ow, []).append(it.cell_index)
     order = sorted(c.index for c in result.cells)
+    # 칸에 보여 줄 글자: 정답 글자로 인정한 칸은 정답 글자 (인식 1순위가 비슷한 다른 글자여도), 아니면 인식한 글자
     shown = {c.index: c.recognized for c in result.cells}
+    for it in items:
+        if it.cell_index is not None and it.target_char and it.target_char != " " and it.error not in CHAR_ERRORS:
+            shown[it.cell_index] = it.target_char
 
     def span(cells: list[int]) -> list[int]:
         """cells의 처음~끝 사이 모든 칸 (사이의 빈 칸 포함)."""
