@@ -7,10 +7,12 @@
 지금 /grade는 형식만 맞춘 임시 응답이다 (app/pipeline.py 참고).
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 
 from app import errors, pipeline
 from app.config import ENGINE_VERSION
+from app.core.reference import get_reference, has_reference
+from app.core.stroke_vectorizer.paths import font_id
 from app.schemas import GradeRequest, GradeResponse, HealthResponse
 
 app = FastAPI(title="Correction Engine", version=ENGINE_VERSION)
@@ -27,3 +29,15 @@ def health() -> HealthResponse:
 def grade(req: GradeRequest) -> GradeResponse:
     """제출된 원고지 칸 배열을 판정한다. 실패하면 ErrorResponse (400 / 422 / 500)."""
     return pipeline.grade(req)
+
+
+@app.get("/reference")
+def reference(chars: str = Query(min_length=1, max_length=30)):
+    return {
+        "font": font_id(),
+        "items": [
+            {"char": char, "strokes": get_reference(char)}
+            for char in dict.fromkeys(chars)
+            if has_reference(char)
+        ],
+    }

@@ -25,7 +25,7 @@ import json
 from functools import cache
 from typing import Any
 
-from app.core.stroke_vectorizer.compose import composed_path, relative_to_root
+from app.core.stroke_vectorizer.paths import composed_path, relative_to_root
 from app.schemas import ReferenceStroke
 
 
