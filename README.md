@@ -12,7 +12,7 @@ FE (iPad Safari) → Spring Boot → 교정엔진 (FastAPI)
 app/
 ├── main.py                    # FastAPI 엔드포인트 (스프링부트와 통신)
 ├── config.py                  # 환경변수 설정
-├── errors.py                  # 오류 응답 (400·422·404·405·500을 한 가지 모양으로)
+├── errors.py                  # 오류 응답 (400·422·404·405·500·503을 한 가지 모양으로)
 ├── schemas.py                 # 요청/응답 모델
 ├── pipeline.py                # 인식 → 정렬 → 획순 → 결과 종합 흐름
 ├── core/
@@ -104,9 +104,10 @@ tests/
 | --- | --- | --- | --- |
 | 400 | `INVALID_JSON` | 본문이 JSON이 아님 | 보내는 코드 버그. 다시 보내도 같음 |
 | 422 | `INVALID_REQUEST` | 위 요청 검사 규칙을 어김. `details`에 틀린 값 위치(`field`)와 이유 | 보내는 값 확인. 다시 보내도 같음 |
-| 404 | `NOT_FOUND` | 없는 주소 | 주소 확인 |
+| 404 | `NOT_FOUND` | 없는 주소, 정답 획 데이터에 없는 글자(`/reference`) | 주소·글자 확인 |
 | 405 | `METHOD_NOT_ALLOWED` | GET/POST가 다름 | 방식 확인 |
 | 500 | `INTERNAL_ERROR` | 엔진 내부 오류 (내용은 엔진 로그에만 남김) | 잠시 뒤 다시 시도할 수 있음 |
+| 503 | `REFERENCE_UNAVAILABLE` | 엔진에 정답 획 사전이 없음 (`/reference`, 엔진 설치 문제) | 엔진 담당에게 알림 |
 
 - `field`는 요청 JSON 기준 위치 (`cells[0].strokes[1].points`). 요청 전체에 걸친 규칙이면 `null`
 - 형식: `app/schemas.py`의 `ErrorResponse`, JSON Schema: `docs/schema/error_response.schema.json`, 처리 코드: `app/errors.py`
@@ -117,7 +118,7 @@ tests/
 | --- | --- | --- |
 | `sessionId` | 요청의 `sessionId`를 그대로 돌려줌 | 스프링부트 로그 맞추기 |
 | `correct` | 글자 + 띄어쓰기가 모두 맞음 | 고수 결과(맞음/틀림), 쓰기 기록 |
-| `perfect` | `correct`이고 획순도 모두 맞음 | 쓰기 기록, 칭찬 |
+| `perfect` | `correct`이고, 맞게 쓴 한글 칸을 모두 획 판정했고 모두 통과(`strokePass: true`). 균형만 틀려도, 획 판정을 못 한 칸이 있어도 `false` | 쓰기 기록, 칭찬 |
 | `cells[]` | 칸마다의 결과 (요청 칸과 같은 순서) | 초보 결과 화면 |
 | `cells[].expected` / `recognized` | 이 칸의 정답 글자 / 학습자가 쓴 글자 | '이렇게 쓰셨어요' |
 | `cells[].mark` | 칸 표시: `none` 맞음, `char` 빨강(글자), `spacing` 빨강(띄어쓰기), `stroke` 주황(획순) | 상자 색 |
@@ -142,7 +143,7 @@ tests/
  ├─③ check_strokes  글자가 맞은 칸만 "순서대로 썼나?"     → 획순 오류, 획 짝
  ├─④ aggregate      ①②③을 화면용으로 묶기                → 칸 색(mark), 어절 결과, correct·perfect
  ├─⑤ explanations   틀린 곳 설명 문장 만들기              → '이렇게 고쳐요'
- └─⑥ sejong_message 킹세종 말풍선 (LLM이 되면 sejong_line) → 말풍선
+ └─⑥ sejong_line    킹세종 말풍선 (Gemini, 안 되면 sejong_message 템플릿) → 말풍선
  ▼
 응답
 ```
@@ -218,19 +219,37 @@ python -m scripts.hand_writing_confirm                  # 필기 테스트 → h
 
 | 주소 | 설명 |
 |---|---|
-| `POST /grade` | 판정 요청 → 판정 결과. **지금은 형식만 맞춘 임시 응답** (`engineVersion`이 `-stub`으로 끝남) |
-| `GET /health` | 살아 있는지 확인. `{"status": "ok", "engineVersion": "0.1.0-stub"}` — `-stub`이면 임시 응답 중 |
+| `POST /grade` | 판정 요청 → 판정 결과. 글자 인식·띄어쓰기·획순 판정과 설명 문장(`explanations`)이 나온다. 정답 획 데이터가 없으면 글자 인식 대신 정답 글자를 썼다고 가정하고 획순 판정은 건너뛴다 |
+| `GET /reference/{글자}` | 글자 하나의 정답 획 (초보 회색 가이드, 정답 리플레이). 글자는 URL 인코딩 (`가` → `%EA%B0%80`). 한글 음절·자모 한 글자가 아니면 422, 사전에 없는 글자 404, 엔진에 사전이 없으면 503. 정답 획은 `engineVersion`이 바뀔 때만 바뀌어 캐시해도 됨 |
+| `GET /health` | 살아 있는지 확인. `{"status": "ok", "engineVersion": "0.1.0-stub"}` — `-stub`이면 글자 인식 등 일부가 아직 임시 |
 | `GET /docs` | 필드 설명을 브라우저에서 보고 직접 호출해 볼 수 있음 |
 
 - 형식 정의: `app/schemas.py`
 - 백엔드용 JSON Schema: `docs/schema/*.schema.json` (`python -m scripts.export_json_schema`로 다시 만듦)
 - 피그마 장면별 예시: `tests/fixtures/grade_request_*.json`, `grade_response_*.json`
   - `beginner` 바다 (다 획순 틀림) / `intermediate` 보고 싶었어 (싶→십) / `advanced` 나 너 좋아하냐? (나너 붙여 씀)
-  - 응답 예시는 진짜 판정이 나올 모양이다. 지금 `/grade`는 형식만 맞춘 임시 응답(모든 칸 맞음)을 돌려준다
+  - 응답 예시는 진짜 판정이 나올 모양이다. 예시 요청의 획은 대략 그린 가짜 획이라, 정답 획 데이터가 있는 서버에 그대로 보내면 다른 글자로 읽힐 수 있다. 정답 획 데이터가 없으면 글자 인식 대신 정답 글자를 썼다고 가정하고 획순 판정은 건너뛴다 (`strokePass: null`)
 - 잘못된 요청은 422 (규칙은 위 '요청 검사 규칙' 표)
+- 판정 시간 재기 (백엔드 제한 시간 정할 때). 정답 획 사전이 있어야 함:
+
+  ```bash
+  python -m scripts.measure_grade_time                              # 엔진만 (네트워크 제외)
+  python -m scripts.measure_grade_time --url http://127.0.0.1:8000  # 띄워 둔 서버에 요청
+  ```
+
+  Windows에서 `localhost`로 부르면 요청마다 약 2초가 더 걸릴 수 있다 (IPv6 `::1`을 먼저 시도함). `127.0.0.1`이나 IP 주소로 부른다.
 
 다른 컴퓨터(백엔드)에서 호출하려면 `--host 0.0.0.0`으로 띄운다:
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+환경변수 (모두 없어도 돌아감, `app/config.py`):
+
+| 이름 | 기본값 | 설명 |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | 없음 | 있으면 킹세종 말풍선을 Gemini로 만든다. 없으면 템플릿 말풍선. **깃에 올리지 않는다**. 결제를 연결하지 않은 프로젝트의 키여야 무료 등급으로 쓴다 (결제가 필요한 프로젝트면 402) |
+| `LLM_MODEL` | `gemini-3.5-flash-lite` | 쓸 Gemini 모델 (무료 등급 있음, 약 2초). 무료 등급이 없는 모델이면 402. `gemini-flash-latest`는 무료가 아닌 모델을 가리킬 수 있어 쓰지 않는다 |
+| `LLM_TIMEOUT_MS` | `7000` | 이 시간 안에 Gemini 답이 없으면 기다리지 않고 템플릿 말풍선. 키가 있으면 `/grade`가 최대 이만큼 늘 수 있다. 서버가 엔진을 기다리는 시간(10초)보다 충분히 짧게 둔다 |
+| `ENGINE_VERSION` | `0.1.0-stub` | 응답의 `engineVersion` |
