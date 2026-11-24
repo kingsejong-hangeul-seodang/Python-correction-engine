@@ -81,10 +81,17 @@ def test_reference_covers_all_syllables_and_jamo():
 
 def test_jamo_alone_can_be_checked():
     result = check_strokes("ㄱ", CANVAS, written_like_reference("ㄱ"))
-    # 획순 오류는 없어야 한다. BALANCE는 보지 않음: 폰트의 자모 단독 ㄱ은 높이가 칸의 0.46이라
+    # 획순 오류는 없어야 한다. 폰트의 자모 단독 ㄱ은 높이가 칸의 0.46이라
     # 글자 크기 기준(0.5~1.0)에 정답 자체가 걸린다 (기준을 자모 단독용으로 정할 때까지)
     assert [e for e in result.errors if e.type != ErrorType.BALANCE] == []
     assert [m.role for m in result.stroke_map] == [Role.CHO]
+
+
+def test_balance_error_does_not_fail_stroke_check():
+    # 자모 단독 ㄱ: 정답대로 쓰면 BALANCE(glyph_size)만 걸린다 → 오류 목록엔 남지만 통과
+    result = check_strokes("ㄱ", CANVAS, written_like_reference("ㄱ"))
+    assert [e.type for e in result.errors] == [ErrorType.BALANCE]
+    assert result.passed
 
 
 def test_standard_jieut_still_passes():

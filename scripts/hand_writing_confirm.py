@@ -2,10 +2,12 @@
 필기 테스트 서버 (로컬 전용): 화면에 글자를 써서 획순·균형 판정을 확인
 (app/services/stroke_checker.py, stroke_balance.py)
 
-  python -m scripts.hand_writing_confirm [--port 5000]   → http://localhost:5000
+  python -m scripts.hand_writing_confirm [--port 5000]                 → http://localhost:5000
+  python -m scripts.hand_writing_confirm --font DONGGUK-UNIVERSITY    # 다른 폰트의 정답으로
 
-정답은 서버와 같은 정답 획 사전(core/reference.py, composed_all.json)에서 꺼낸다.
-editor로 고친 뒤에는 python -m app.core.stroke_vectorizer.compose --all 을 해야 여기에도 반영된다.
+정답은 서버와 같은 정답 획 사전(core/reference.py, composed_all.json)에서 꺼낸다 (--font면 그 폰트의 사전).
+다른 폰트는 먼저 python -m app.core.stroke_vectorizer.compose --all --font <폰트> 로 사전을 만든다.
+editor로 고친 뒤에도 compose --all 을 다시 해야 여기에 반영된다.
 
   GET  /           pad.html (필기 화면)
   GET  /ref/<글자>  정답 획 (정답 획 사전, 가이드 표시용)
@@ -20,17 +22,19 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from app.core.reference import get_reference
+from app.core.stroke_vectorizer.compose import font_id
 from app.services import stroke_balance as balance
 from app.services.stroke_checker import judge
 
 HERE = Path(__file__).resolve().parent
 
 MODES = ("order", "balance", "both")
+FONT = None  # --font (None = 기본 폰트)
 
 
 def reference(char):
     """정답 획 사전에서 꺼낸 정답 → judge()·balance·pad.html이 쓰는 dict 형식"""
-    return [s.model_dump(mode="json") for s in get_reference(char)]
+    return [s.model_dump(mode="json") for s in get_reference(char, FONT)]
 
 
 def evaluate(req):
@@ -94,12 +98,18 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=5000)
+    ap.add_argument("--font", help="정답 폰트 (data/fonts/ 안의 파일 이름, 기본 DONGGUK-UNIVERSITY)")
     args = ap.parse_args()
+    FONT = args.font
+    try:
+        get_reference("가", FONT)  # 사전이 없으면 시작할 때 바로 알림
+    except FileNotFoundError as e:
+        raise SystemExit(e) from e
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     except OSError as e:
         raise SystemExit(f"포트 {args.port}을 이미 쓰는 중 → --port {args.port + 1}") from e
-    print(f"필기 테스트: http://localhost:{args.port}  (정답: 정답 획 사전, 끝내려면 Ctrl+C)")
+    print(f"필기 테스트: http://localhost:{args.port}  (정답: {font_id(FONT)} 정답 획 사전, 끝내려면 Ctrl+C)")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

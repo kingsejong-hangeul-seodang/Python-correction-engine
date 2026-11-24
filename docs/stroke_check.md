@@ -16,7 +16,7 @@ check_strokes(target, canvas, strokes) -> StrokeCheckResult
 
 | 출력 | 뜻 |
 |---|---|
-| `passed` | 명세의 pass. `errors`가 비었으면 True |
+| `passed` | 명세의 pass. **획순 오류**(`ORDER`·`DIRECTION`·`MISSING`·`EXTRA`)가 없으면 True. `BALANCE`는 `errors`에만 들어가고 통과 여부엔 영향 없음 |
 | `errors` | `ORDER` / `DIRECTION` / `MISSING` / `EXTRA` / `BALANCE` (`schemas.CellError` 형식) |
 | `stroke_map` | 학습자 획 ↔ 정답 획 짝, 학습자 획마다 하나 (`schemas.StrokeMapItem` 형식) |
 | `duration_ms` | 첫 점 ~ 마지막 점 시간(ms) |

@@ -2,8 +2,8 @@
 폰트 → 조립 재료 (자모 모양 + 자모가 놓일 자리). 폰트는 data/fonts/ 안의 파일, 결과는 data/extracted/<폰트 id>/
 전체 순서·파일 형식: docs/extracted_data.md
 
-  python -m app.core.stroke_vectorizer.extract                                # 기본 폰트 NotoSansKR-Light.ttf
-  python -m app.core.stroke_vectorizer.extract --font DONGGUK-UNIVERSITY      # data/fonts/DONGGUK-UNIVERSITY.ttf
+  python -m app.core.stroke_vectorizer.extract --hook-len 22                  # 기본 폰트(동국체)는 22
+  python -m app.core.stroke_vectorizer.extract --font NotoSansKR-Light        # 다른 폰트 (data/fonts/ 안)
   python -m app.core.stroke_vectorizer.extract --font path/to/font.ttf        # 다른 곳의 폰트 파일
   python -m app.core.stroke_vectorizer.extract --steps table,mode             # 일부 단계만
   python -m app.core.stroke_vectorizer.extract --sample 300                   # 음절 300자만 빠른 확인 (저장 안 함)
@@ -49,7 +49,7 @@ MIN_SEG = 4  # 이보다 짧은 선분은 무시 (px)
 JOIN_DIST = 6  # 선분 끝끼리 이 거리 안이면 이어진 것으로 봄 (px)
 ANGLE_TOL = 35  # 방향 허용 오차 (도)
 N_POINTS = 32  # 획당 점 개수
-HOOK_LEN = 10  # 이보다 짧은 선분은 획 끝 장식 (남아도 허용, px)
+HOOK_LEN = 10  # 이보다 짧은 선분은 획 끝 장식 (남아도 허용, px). 폰트마다 --hook-len으로 바꿈
 MAX_TURN = 45  # 한 방향 단계 안에서 허용하는 선분 간 꺾임 (도)
 ROW_GAP = 12  # 시작점 y 차이가 이 안이면 같은 줄 → 왼쪽 우선 (px)
 COL_GAP = 24  # 겹자모: 시작점 x 차이가 이 안이면 같은 열 → 위쪽 우선 (px)
@@ -76,10 +76,12 @@ gs: Any = None
 UPM: Any = None
 
 
-def set_font(path, em_top):
-    """추출에 쓸 폰트 (모듈 전역 → rasterize가 씀)"""
-    global FONT, EM_TOP, font, cmap, gs, UPM
+def set_font(path, em_top, hook_len=None):
+    """추출에 쓸 폰트 (모듈 전역 → rasterize가 씀). hook_len을 주면 HOOK_LEN도 바꿈"""
+    global FONT, EM_TOP, font, cmap, gs, UPM, HOOK_LEN
     FONT, EM_TOP = str(path), em_top
+    if hook_len is not None:
+        HOOK_LEN = hook_len
     font = TTFont(FONT)
     cmap, gs = font.getBestCmap(), font.getGlyphSet()
     UPM = font["head"].unitsPerEm
@@ -90,16 +92,22 @@ def has_glyph(ch):
 
 
 def add_font_args(ap):
-    ap.add_argument("--font", help="폰트 (data/fonts/ 안의 파일 이름 또는 경로, 기본 NotoSansKR-Light)")
+    ap.add_argument("--font", help="폰트 (data/fonts/ 안의 파일 이름 또는 경로, 기본 DONGGUK-UNIVERSITY)")
     ap.add_argument("--em-top", type=float, help="글자 상자 위 y (기본: 폰트에서 자동 추정)")
+    ap.add_argument(
+        "--hook-len",
+        type=float,
+        help=f"이보다 짧은 선분은 획 끝 장식으로 봄 (px, 기본 {HOOK_LEN}). 붓글씨체처럼 획 머리가 큰 폰트는 크게",
+    )
 
 
 def load_font(args):
-    """--font/--em-top → 폰트 적용, (결과 폴더, 폰트 정보)"""
+    """--font/--em-top/--hook-len → 폰트 적용, (결과 폴더, 폰트 정보)"""
     meta = dict(C.font_info(args.font))
     if args.em_top is not None:
         meta["em_top"] = args.em_top
-    set_font(meta["file"], meta["em_top"])
+    meta["hook_len"] = args.hook_len if args.hook_len is not None else HOOK_LEN
+    set_font(meta["file"], meta["em_top"], meta["hook_len"])
     return C.font_dir(args.font), meta
 
 
@@ -703,7 +711,7 @@ def step_syllables(fdir, meta, sample=0, workers=None, seed=0):
     data, fails, times = {}, [], []
     t0 = time.time()
     print(f"[syllables] {len(chars)}자, 프로세스 {workers}개")
-    with Pool(workers, initializer=set_font, initargs=(meta["file"], meta["em_top"])) as pool:
+    with Pool(workers, initializer=set_font, initargs=(meta["file"], meta["em_top"], meta["hook_len"])) as pool:
         for n, (syl, d, reason, dt) in enumerate(pool.imap_unordered(process, chars, chunksize=8), 1):
             times.append((dt, syl, reason))
             if d:
