@@ -2,8 +2,8 @@
 폰트 → 조립 재료 (자모 모양 + 자모가 놓일 자리). 폰트는 data/fonts/ 안의 파일, 결과는 data/extracted/<폰트 id>/
 전체 순서·파일 형식: docs/extracted_data.md
 
-  python -m app.core.stroke_vectorizer.extract                                # 기본 폰트 NotoSansKR-Light.ttf
-  python -m app.core.stroke_vectorizer.extract --font DONGGUK-UNIVERSITY --hook-len 22  # 붓글씨체는 장식 기준 크게
+  python -m app.core.stroke_vectorizer.extract --hook-len 22                  # 기본 폰트(동국체)는 22
+  python -m app.core.stroke_vectorizer.extract --font NotoSansKR-Light        # 다른 폰트 (data/fonts/ 안)
   python -m app.core.stroke_vectorizer.extract --font path/to/font.ttf        # 다른 곳의 폰트 파일
   python -m app.core.stroke_vectorizer.extract --steps table,mode             # 일부 단계만
   python -m app.core.stroke_vectorizer.extract --sample 300                   # 음절 300자만 빠른 확인 (저장 안 함)
@@ -92,7 +92,7 @@ def has_glyph(ch):
 
 
 def add_font_args(ap):
-    ap.add_argument("--font", help="폰트 (data/fonts/ 안의 파일 이름 또는 경로, 기본 NotoSansKR-Light)")
+    ap.add_argument("--font", help="폰트 (data/fonts/ 안의 파일 이름 또는 경로, 기본 DONGGUK-UNIVERSITY)")
     ap.add_argument("--em-top", type=float, help="글자 상자 위 y (기본: 폰트에서 자동 추정)")
     ap.add_argument(
         "--hook-len",

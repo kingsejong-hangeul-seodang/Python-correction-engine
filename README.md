@@ -32,7 +32,7 @@ app/
     ├── feedback_templates.py  # 설명 문장, 킹세종 템플릿
     └── llm_feedback.py        # 킹세종 LLM 한마디
 data/
-├── fonts/                     # 정답 폰트 파일 (기본 NotoSansKR-Light.ttf)
+├── fonts/                     # 정답 폰트 파일 (기본 DONGGUK-UNIVERSITY.ttf)
 └── extracted/<폰트 id>/       # 폰트에서 뽑은 조합 재료 (docs/extracted_data.md). 폰트 id = 파일 이름
 scripts/                       # JSON Schema 내보내기, 필기 테스트 서버, 획 데이터 검수
 outputs/                       # 검수 그림 등 생성물 (git에 올리지 않음)
@@ -187,7 +187,7 @@ GitHub에 push하거나 PR을 올리면 `.github/workflows/ci.yml`이 위 네 �
 ## 정답 획 데이터 (stroke_vectorizer)
 
 음절의 정답 획(획 순서 · 소속 자모 · 중심선 32점, 0~1)을 **자모 획을 음절 안 자리(박스)에 배치**해서 만듭니다.
-- 폰트는 `data/fonts/` 안의 파일이고, 기본은 `NotoSansKR-Light.ttf`입니다.
+- 폰트는 `data/fonts/` 안의 파일이고, 기본은 `DONGGUK-UNIVERSITY.ttf`입니다.
 - `extract`가 폰트에서 조합 재료를 뽑아 `data/extracted/<폰트 id>/`에 저장합니다 (폰트 id = 파일 이름에서 확장자를 뺀 것).
 - `compose --all`이 그 재료로 11,172자 + 자모 단독 51개의 정답 획을 조립해 **정답 획 사전** `composed_all.json`으로 저장합니다.
 - 서버는 `core/reference.py`의 `get_reference(글자)`로 이 사전에서 찾아 씁니다 (처음 한 번 읽음, 약 2초).
@@ -199,8 +199,8 @@ GitHub에 push하거나 PR을 올리면 `.github/workflows/ci.yml`이 위 네 �
 
 ```bash
 # 만들기
-python -m app.core.stroke_vectorizer.extract                             # 기본 폰트 전 과정
-python -m app.core.stroke_vectorizer.extract --font DONGGUK-UNIVERSITY --hook-len 22  # 다른 폰트 (data/fonts/에 넣은 뒤)
+python -m app.core.stroke_vectorizer.extract --hook-len 22               # 기본 폰트(동국체) 전 과정 (붓글씨체라 22)
+python -m app.core.stroke_vectorizer.extract --font NotoSansKR-Light      # 다른 폰트 (data/fonts/에 넣은 뒤)
 python -m app.core.stroke_vectorizer.extract --steps table,mode           # 일부 단계만 (jamo,syllables,table,mode)
 python -m app.core.stroke_vectorizer.compose --all                      # 정답 획 사전 → data/extracted/<폰트 id>/composed_all.json
 python -m app.core.stroke_vectorizer.editor                               # 수동 조정 편집기 → http://localhost:8765

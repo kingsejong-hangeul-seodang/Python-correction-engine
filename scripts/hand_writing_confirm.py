@@ -98,7 +98,7 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=5000)
-    ap.add_argument("--font", help="정답 폰트 (data/fonts/ 안의 파일 이름, 기본 NotoSansKR-Light)")
+    ap.add_argument("--font", help="정답 폰트 (data/fonts/ 안의 파일 이름, 기본 DONGGUK-UNIVERSITY)")
     args = ap.parse_args()
     FONT = args.font
     try:

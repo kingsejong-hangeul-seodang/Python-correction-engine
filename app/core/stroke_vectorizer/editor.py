@@ -155,7 +155,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--font", help="폰트 (data/fonts/ 안의 파일 이름 또는 경로, 기본 NotoSansKR-Light)")
+    ap.add_argument("--font", help="폰트 (data/fonts/ 안의 파일 이름 또는 경로, 기본 DONGGUK-UNIVERSITY)")
     ap.add_argument("--port", type=int, default=8765)
     args = ap.parse_args()
     Handler.prof = get_profile(args.font)

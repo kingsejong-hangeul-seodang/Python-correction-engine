@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[3]  # app/core/stroke_vectorizer/compose
 FONT_FILES_DIR = ROOT / "data" / "fonts"  # 폰트 파일 (.ttf/.otf)
 FONTS_DIR = ROOT / "data" / "extracted"  # 폰트별 추출 결과
 OUTPUTS_DIR = ROOT / "outputs"  # 검수용 그림 등 생성물 (git에 올리지 않음)
-DEFAULT_FONT_FILE = FONT_FILES_DIR / "NotoSansKR-Light.ttf"  # 정답 획 기본 폰트
+DEFAULT_FONT_FILE = FONT_FILES_DIR / "DONGGUK-UNIVERSITY.ttf"  # 정답 획 기본 폰트
 FONT_EXTS = (".ttf", ".otf")
 
 
@@ -56,7 +56,7 @@ def relative_to_root(p):
 # ═════════ 폰트 ═════════
 def font_id(font=None):
     """폰트 → id (파일 이름에서 확장자 뺀 것). None = 기본 폰트.
-    'NotoSansKR-Light', 'NotoSansKR-Light.ttf', 'data/fonts/NotoSansKR-Light.ttf' 모두 'NotoSansKR-Light'"""
+    'DONGGUK-UNIVERSITY', 'DONGGUK-UNIVERSITY.ttf', 'data/fonts/DONGGUK-UNIVERSITY.ttf' 모두 'DONGGUK-UNIVERSITY'"""
     if font is None:
         return DEFAULT_FONT_FILE.stem
     p = Path(font)
@@ -539,7 +539,7 @@ def draw(chars, out=OUTPUTS_DIR / "compose.png", cols=10, font=None, use_tweaks=
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("chars", nargs="*")
-    ap.add_argument("--font", help="폰트 (data/fonts/ 안의 파일 이름 또는 경로, 기본 NotoSansKR-Light)")
+    ap.add_argument("--font", help="폰트 (data/fonts/ 안의 파일 이름 또는 경로, 기본 DONGGUK-UNIVERSITY)")
     ap.add_argument("--all", action="store_true", help="정답 획 사전 만들기 (11,172자 + 자모 51개) → composed_all.json")
     ap.add_argument("--full", action="store_true", help="무작위 그림을 11,172자 중에서 (기본 완성형 2,350자)")
     ap.add_argument("--n", type=int, default=50, help="글자 안 주면 무작위 N자")
