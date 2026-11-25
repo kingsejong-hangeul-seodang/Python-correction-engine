@@ -173,13 +173,27 @@ def test_wrong_char_is_not_accepted(written, target):
 
 
 @needs_data
-@pytest.mark.parametrize("written, target", [("타", "다"), ("더", "다")])
-def test_close_wrong_char_is_recognized_but_still_accepted(written, target):
-    """획 하나·모음 방향만 다른 글자는 1순위로 알아보지만, 점수 차이(약 0.07)가 ACCEPT_MARGIN(0.1)보다 작아
-    지금 기준으로는 맞게 쓴 것으로 인정된다 (학습자에게 유리하게). 기준을 바꾸면 이 테스트도 바꾼다."""
+@pytest.mark.parametrize(
+    "written, target",
+    [("타", "다"), ("더", "다"), ("포", "보"), ("보", "포"), ("교", "고"), ("여", "어"), ("아", "어"), ("파", "바")],
+)
+def test_close_wrong_char_is_not_accepted(written, target):
+    """획 하나·모음 방향만 다른 글자: 그림 점수 차이는 작지만,
+    획 비교로 다시 골라 쓴 글자를 1순위로 알아보고 인정하지 않는다."""
     rec = recognize(cell_of(handwritten(written)), CANVAS, [target])
+    assert rec.by_strokes
     assert rec.top is not None and rec.top.char == written, rec.candidates
-    assert rec.accepts(target)
+    assert not rec.accepts(target)
+
+
+@needs_data
+def test_narrow_handwriting_is_still_accepted():
+    """손글씨처럼 좁고 길게 쓴 글자: 그림 비교는 비율이 달라 다른 글자를 1순위로 고르기 쉽지만,
+    획 비교로 정답을 고른다."""
+    for char in ["보", "고", "바", "어"]:
+        narrow = [[(0.5 + (x - 0.5) * 0.6, 0.5 + (y - 0.5) * 1.1) for x, y in s] for s in handwritten(char, seed=2)]
+        rec = recognize(cell_of(narrow), CANVAS, [char])
+        assert rec.accepts(char), (char, rec.candidates)
 
 
 @needs_data
@@ -200,4 +214,5 @@ def test_advanced_cell_finds_its_char_among_the_whole_sentence():
     assert rec.accepts("좋")
     assert all(rec.score_of("좋") > rec.score_of(c) for c in sentence if c != "좋")
     assert len(rec.candidates) <= 5
-    assert [c.score for c in rec.candidates] == sorted((c.score for c in rec.candidates), reverse=True)
+    if not rec.by_strokes:  # 획 비교로 다시 골랐으면 후보는 획 비교 순 (점수 순이 아닐 수 있다)
+        assert [c.score for c in rec.candidates] == sorted((c.score for c in rec.candidates), reverse=True)

@@ -17,6 +17,10 @@
     - 점수 = 학습자 획이 정답 획 가까이 있는 정도(정밀도)와 정답 획이 빠짐없이 쓰였는지(재현율)의 조화 평균.
       거리가 TOLERANCE_PX보다 멀어질수록 빠르게 0에 가까워진다.
     - 기준값(TOLERANCE_PX 등)은 정답 획을 흔들어 만든 가짜 손글씨로 맞췄다. 실제 손글씨로 다시 맞춰야 한다.
+- 획 비교로 다시 고르기 (정진님 제안): 그림 후보 상위 STROKE_POOL개 + 가까운 정답 글자를
+    stroke_checker와 같은 방식(획 짝짓기)으로 다시 줄 세우고, 그 1순위만 맞게 쓴 것으로 인정한다.
+    손글씨 비율이 정답 글씨와 달라 그림 비교가 틀리는 것(보 → 포·싶, 고 → 교)을 바로잡는다.
+    획 비교 1순위도 획이 많이 안 맞으면(낙서, 획을 많이 이어 쓴 칸) 그림 비교 결과를 그대로 쓴다.
 - 후보는 expected의 글자 + 각각과 헷갈리는 글자(다 → 타·따·더, 닭 → 달·닥)에서만 고른다 (confusable_chars).
 - 문장부호는 정답 획 사전에 없다: ? ! 는 엔진에 둔 모양(_PUNCT_STROKES)과 비교하고, . , 는 MARK 칸의 크기로 점수를 준다.
 - 정답 획 사전이 없으면 core.reference가 FileNotFoundError를 낸다 (그때 어떻게 할지는 부르는 쪽이 정한다).
@@ -39,10 +43,12 @@ from scipy.ndimage import distance_transform_edt
 
 from app.core import hangul, reference
 from app.schemas import Canvas, Cell
+from app.services import stroke_checker
 
 # accepts 기준 (조정 가능)
 ACCEPT_MARGIN = 0.1  # 1순위와 점수 차이가 이만큼 이하면 맞게 쓴 것으로 인정 (학습자에게 유리하게)
 MIN_ACCEPT_SCORE = 0.3  # 이보다 낮으면 인정하지 않음 (알아보기 힘든 낙서가 맞음이 되지 않게)
+MIN_STROKE_ACCEPT_SCORE = 0.15  # 획 비교로 고른 1순위도 그림 점수가 이보다 낮으면 인정하지 않음 (낙서 거르기)
 
 # 인식 기준 (조정 가능)
 MAX_CANDIDATES = 5  # 돌려주는 후보 수
@@ -52,6 +58,8 @@ SPREAD_PX = 12.0  # 글자 무게중심에서 획까지의 평균 거리(RMS)를
 TOLERANCE_PX = 2.5  # 학습자 획과 정답 획이 이만큼(그림 픽셀) 떨어지면 점수가 e^-1로 줄어든다
 DIRECTION_WINDOW_DEG = 35.0  # 정답 획을 방향(가로·세로·대각선 둘)별로 나눌 때 각 방향에 넣는 범위 (±)
 _SAMPLE_STEP = 0.006  # 획 위에 점을 찍는 간격 (칸 크기 = 1)
+STROKE_POOL = 3  # 획 비교로 다시 줄 세울 그림 후보 수 (+ 가까운 정답 글자). 획 비교가 칸당 시간 대부분이다
+MAX_STROKE_ERROR_RATIO = 1 / 3  # 획 비교 1순위의 오류가 정답 획 수의 이 비율을 넘으면 획 비교 결과를 쓰지 않는다
 SHORTLIST = 3  # 정답 글자가 이보다 많으면(고수) 점수 높은 이만큼만 헷갈리는 글자를 펼친다 (속도)
 
 
@@ -77,7 +85,8 @@ class Recognition:
 
     cell_index: int
     kind: CellKind
-    candidates: list[Candidate]  # 점수 높은 순, 최대 5개. EMPTY면 []
+    candidates: list[Candidate]  # 점수 높은 순, 최대 5개. EMPTY면 []. 획 비교로 다시 골랐으면 획 비교 순
+    by_strokes: bool = False  # 획 비교로 1순위를 다시 골랐는지 (그러면 1순위만 인정)
 
     @property
     def top(self) -> Candidate | None:
@@ -93,14 +102,19 @@ class Recognition:
     def accepts(self, char: str) -> bool:
         """char를 맞게 쓴 것으로 인정할지 (학습자에게 유리하게).
 
-        기준(조정 가능): char의 점수가 MIN_ACCEPT_SCORE 이상이고,
-        1순위이거나 1순위와 점수 차이가 ACCEPT_MARGIN 이하면 인정.
+        기준(조정 가능)
+        - 획 비교로 다시 골랐으면(by_strokes): char가 1순위이고 그림 점수가 MIN_STROKE_ACCEPT_SCORE 이상이면 인정.
+        - 아니면: char의 점수가 MIN_ACCEPT_SCORE 이상이고, 1순위이거나 1순위와 점수 차이가 ACCEPT_MARGIN 이하면 인정.
         EMPTY 칸은 char == ' '일 때만 인정.
         """
         if self.kind == CellKind.EMPTY:
             return char == " "
         top, score = self.top, self.score_of(char)
-        return top is not None and score >= MIN_ACCEPT_SCORE and top.score - score <= ACCEPT_MARGIN
+        if top is None:
+            return False
+        if self.by_strokes:
+            return top.char == char and score >= MIN_STROKE_ACCEPT_SCORE
+        return score >= MIN_ACCEPT_SCORE and top.score - score <= ACCEPT_MARGIN
 
 
 def recognize(cell: Cell, canvas: Canvas, expected: list[str]) -> Recognition:
@@ -136,7 +150,60 @@ def recognize(cell: Cell, canvas: Canvas, expected: list[str]) -> Recognition:
     if small and not any(c.score >= MIN_ACCEPT_SCORE for c in candidates):
         # 작게 쓴 자국이 어떤 글자와도 닮지 않음 → 실수로 찍은 점 (정답에 . , 가 없으니 후보 없음)
         return Recognition(cell_index=cell.index, kind=CellKind.MARK, candidates=[])
+    # 고수: 그림 점수로 고른 정답 글자에 진짜 정답이 빠질 수 있어, 이 칸 자리 근처의 정답 글자도 획 비교에 넣는다
+    # (칸 번호 ≥ 글자 번호: 띄어쓰기 빈 칸이 끼면 칸이 글자보다 뒤로 밀린다)
+    chars = [ch for ch in expected if ch != " "]
+    nearby = chars[max(0, cell.index - 2) : cell.index + 2] if len(chars) > 1 else []
+    reranked = _rerank_by_strokes(strokes, candidates, near_targets + [c for c in nearby if c in score], score)
+    if reranked is not None:
+        return Recognition(cell_index=cell.index, kind=CellKind.CHAR, candidates=reranked, by_strokes=True)
     return Recognition(cell_index=cell.index, kind=CellKind.CHAR, candidates=candidates)
+
+
+# =====================================================================
+# 획 비교로 다시 고르기
+# =====================================================================
+
+
+@lru_cache(maxsize=1024)
+def _stroke_variants(ch: str) -> list[list[dict]]:
+    """정답 글자의 정답 획 + 쓰기 방식 변형들 (stroke_checker와 같은 것)."""
+    return stroke_checker.writing_variants(stroke_checker._reference(ch))
+
+
+def _stroke_rank(user: list[np.ndarray], ch: str) -> tuple[int, float]:
+    """학습자 획을 ch의 정답 획과 짝지어 본 결과 (오류 수, 짝 비용). 작을수록 ch에 가깝다."""
+    best: tuple[int, float] | None = None
+    for ref in _stroke_variants(ch):
+        errors, _, cost = stroke_checker._judge_one(user, ref)
+        if best is None or (len(errors), cost) < best:
+            best = (len(errors), cost)
+    assert best is not None
+    return best
+
+
+def _rerank_by_strokes(
+    strokes: Sequence[np.ndarray], candidates: list[Candidate], near_targets: list[str], score: dict[str, float]
+) -> list[Candidate] | None:
+    """그림 후보 상위 STROKE_POOL개 + 가까운 정답 글자를 획 비교로 다시 줄 세운다 (정진님 제안).
+
+    그림 비교는 손글씨 비율이 정답 글씨와 다르면(좁고 길게 쓴 '보' 등) 엉뚱한 글자가 1순위가 되기 쉽다.
+    획 비교는 획 수·획 하나하나의 모양과 위치로 짝을 지어 보 ↔ 포, 고 ↔ 교, 어 ↔ 아처럼 획 하나 다른 글자를 잘 가른다.
+    다시 고르지 않는 경우 (None → 그림 순서·기준 그대로):
+    - 한글이 아닌 글자(? !)가 1순위
+    - 획 비교 1순위도 획이 많이 안 맞음 (오류가 정답 획 수 × MAX_STROKE_ERROR_RATIO 초과, 최소 1):
+      낙서이거나 획을 많이 이어 쓴 칸
+    """
+    if not candidates or not _has_strokes(candidates[0].char):
+        return None
+    pool = [c for c in dict.fromkeys([c.char for c in candidates[:STROKE_POOL]] + near_targets) if _has_strokes(c)]
+    user = [stroke_checker.resample(s) for s in strokes]
+    rank = {c: _stroke_rank(user, c) for c in pool}
+    pool.sort(key=lambda c: rank[c])
+    errors, best = rank[pool[0]][0], pool[0]
+    if errors > max(1, int(len(_stroke_variants(best)[0]) * MAX_STROKE_ERROR_RATIO)):
+        return None
+    return [Candidate(char=c, score=round(score[c], 3)) for c in pool[:MAX_CANDIDATES]]
 
 
 # =====================================================================
@@ -216,9 +283,14 @@ _PUNCT_STROKES: dict[str, list[list[tuple[float, float]]]] = {
 }
 
 
+def _has_strokes(ch: str) -> bool:
+    """정답 획 사전에 있는 한글(음절·자모)인지 (획 비교로 다시 고를 수 있는 글자)."""
+    return (hangul.is_syllable(ch) or hangul.is_jamo(ch)) and reference.has_reference(ch)
+
+
 def _comparable(ch: str) -> bool:
     """CHAR 칸에서 그림으로 비교할 수 있는 글자인지 (. , 는 MARK 칸에서만 본다)."""
-    return ch in _PUNCT_STROKES or ((hangul.is_syllable(ch) or hangul.is_jamo(ch)) and reference.has_reference(ch))
+    return ch in _PUNCT_STROKES or _has_strokes(ch)
 
 
 def _size(strokes: Sequence[np.ndarray]) -> float:
