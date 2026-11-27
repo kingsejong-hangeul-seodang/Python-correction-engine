@@ -9,6 +9,7 @@
 
 규칙
 - 애매한 칸: 글자 칸인데 획 비교로 고르지 못했거나(예전 그림 판정으로 돌아감), 1순위가 이 칸의 정답 글자가 아닌 칸
+  (고수는 칸이 밀릴 수 있어 엔진에 문장 글자 전부를 넘기지만, 여기서는 그 자리 정답 글자와 앞뒤 하나로 본다)
 - 채점 한 번에 Gemini는 한 번만 부른다: 애매한 칸 그림을 한 요청에 모아 보내고 글자 목록으로 받는다
   (무료 등급은 분당 요청 수로 막혀서, 칸마다 부르면 고수 30칸 채점 한 번에 4~6번이 된다)
 - Gemini에는 칸 그림만 보낸다. 정답 글자는 알려 주지 않는다 (알려 주면 그 글자로 맞춰 읽는다)
@@ -35,7 +36,7 @@ from dataclasses import replace
 import numpy as np
 
 from app import config
-from app.schemas import GradeRequest, Stroke
+from app.schemas import GradeRequest, Stage, Stroke
 from app.services import llm_feedback
 from app.services.recognizer import MAX_CANDIDATES, MIN_ACCEPT_SCORE, Candidate, CellKind, Recognition
 
@@ -66,6 +67,8 @@ def reread(req: GradeRequest, recognitions: list[Recognition], expected: list[li
     if not config.GEMINI_API_KEY or not config.LLM_READ:
         return recognitions
     cells = {c.index: c for c in req.cells}
+    if req.stage == Stage.ADVANCED:
+        expected = _nearby(req, recognitions)
     asks = [k for k, (rec, exp) in enumerate(zip(recognitions, expected, strict=True)) if ambiguous(rec, exp)]
     asks = [k for k in asks if cells[recognitions[k].cell_index].strokes][:MAX_CELLS]
     if not asks:
@@ -100,6 +103,24 @@ def reread(req: GradeRequest, recognitions: list[Recognition], expected: list[li
             read or "?",
             " (인정)" if out[k] is not rec else "",
         )
+    return out
+
+
+def _nearby(req: GradeRequest, recognitions: list[Recognition]) -> list[list[str]]:
+    """고수: 칸마다 그 자리 정답 글자와 앞뒤 하나 (k번째로 글자를 쓴 칸 ↔ 공백을 뺀 정답의 k번째 글자).
+
+    고수는 엔진에 문장 글자 전부를 넘겨서, '패' 자리에 '채'로 읽혀도 '채'가 문장 어딘가에 있으면 애매하지 않게 보인다.
+    그래서 다시 물을지·인정할지는 자리 기준으로 본다. 앞뒤 하나는 글자를 하나 빠뜨리거나 더 쓴 경우를 위해.
+    """
+    chars = [ch for ch in req.target if ch != " "]
+    out: list[list[str]] = []
+    k = 0
+    for rec in recognitions:
+        if rec.kind == CellKind.EMPTY:
+            out.append([])
+            continue
+        out.append(chars[max(0, k - 1) : k + 2])
+        k += 1
     return out
 
 

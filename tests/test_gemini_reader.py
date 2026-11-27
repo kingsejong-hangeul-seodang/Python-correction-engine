@@ -5,7 +5,7 @@ import time
 import pytest
 
 from app import config, pipeline
-from app.schemas import GradeRequest
+from app.schemas import GradeRequest, Stage
 from app.services import gemini_reader
 from app.services.recognizer import Candidate, CellKind, Recognition
 from tests.helpers import client, load_request
@@ -13,7 +13,8 @@ from tests.helpers import client, load_request
 
 @pytest.fixture
 def req() -> GradeRequest:
-    return GradeRequest.model_validate(load_request("advanced"))
+    """예시 요청의 칸들. 칸마다 정답 글자를 테스트에서 직접 주려고 단계는 초보로 둔다 (고수는 자리로 다시 정함)."""
+    return GradeRequest.model_validate(load_request("advanced")).model_copy(update={"stage": Stage.BEGINNER})
 
 
 @pytest.fixture
@@ -136,3 +137,16 @@ def test_grade_still_answers_when_second_read_breaks(monkeypatch):
 
     monkeypatch.setattr(gemini_reader, "reread", broken)
     assert client.post("/grade", json=load_request("advanced")).status_code == 200
+
+
+def test_advanced_asks_by_position_not_whole_sentence(gemini):
+    """고수: '패' 자리를 '채'로 읽었으면, '채'가 문장 앞에 있어도 그 자리 글자가 아니라서 다시 묻는다."""
+    base = GradeRequest.model_validate(load_request("advanced"))
+    cells = [c.model_copy(update={"index": i}) for i, c in enumerate([c for c in base.cells if c.strokes][:6])]
+    req = base.model_copy(update={"target": "채점 확인 패드", "cells": cells})
+    tops = ["채", "점", "확", "인", "채", "드"]  # 5번째 칸(정답 '패')을 '채'로 읽음
+    recs = [_rec(i, t + "패", by_strokes=True) for i, t in enumerate(tops)]
+    gemini.answer = ["패"]
+    got = gemini_reader.reread(req, recs, [list("채점확인패드")] * 6)
+    assert len(gemini.calls) == 1 and len(gemini.calls[0]) == 1
+    assert [r.top.char for r in got] == ["채", "점", "확", "인", "패", "드"]
