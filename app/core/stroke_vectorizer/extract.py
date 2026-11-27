@@ -452,11 +452,21 @@ def assign(entries, segs, max_calls=20000, time_limit=3.0, meta=None):
     return None
 
 
+VERTICAL_DIRS = {"S", "SE", "SW"}
+
+
+def is_vertical(entry):
+    """방향 단계가 하나이고 아래 방향(S·SE·SW)뿐인 획 (ㅂ의 세로획, ㅍ·ㅠ의 다리 등)"""
+    dirs = entry["dirs"]
+    return len(dirs) == 1 and set(dirs[0].rstrip("!").split("|")) <= VERTICAL_DIRS
+
+
 def _assign(entries, segs, strict, max_calls, deadline):
     """
     부품의 첫 획: 다른 부품이 안 쓴 덩어리 → (겹자모면 왼쪽 우선 / 아니면 위쪽 줄 → 왼쪽)
     부품의 다음 획: 같은 덩어리 → 앞 획과 가까운 것 → 긴 것 → 위·왼쪽
     겹자모: 뒤 부품의 중심이 앞 부품보다 오른쪽이어야 함
+    나란한 세로획 (같은 부품 안 연달은 아래 방향 획, ㅂ ㅍ ㅔ ㅖ ㅛ ㅠ): 뒤 획이 앞 획보다 오른쪽이어야 함
     선분이 남으면 실패 → 되돌아가 다른 후보
     한 번 실패한 (획 번호, 남은 선분) 상태는 기억해서 다시 풀지 않음
     부품이 끝날 때마다 남은 선분을 남은 획들이 덮을 수 있는지 확인 (못 덮으면 바로 되돌아감)
@@ -465,6 +475,12 @@ def _assign(entries, segs, strict, max_calls, deadline):
     failed = set()
     cand_cache = {}
     last_of_unit = {e["unit"]: i for i, e in enumerate(entries)}
+    # 앞 획과 나란한 세로획인 획 번호 (같은 부품 안에서 아래 방향 획이 연달아 나옴)
+    after_left = {
+        i
+        for i in range(1, len(entries))
+        if entries[i]["unit"] == entries[i - 1]["unit"] and is_vertical(entries[i]) and is_vertical(entries[i - 1])
+    }
 
     def cands_of(dirs, free):
         key = (tuple(dirs), frozenset(free))
@@ -487,7 +503,12 @@ def _assign(entries, segs, strict, max_calls, deadline):
     def unit_cx(done, unit):
         return np.vstack([a for u, c in done if u == unit for _, a in c])[:, 0].mean()
 
+    def chain_cx(chain):
+        return np.vstack([a for _, a in chain])[:, 0].mean()
+
     def order_ok(si, done):
+        if si in after_left and chain_cx(done[si][1]) <= chain_cx(done[si - 1][1]):
+            return False  # 나란한 세로획은 왼쪽 먼저
         e = entries[si]
         if e["piece"] == 0 or last_of_unit[e["unit"]] != si:
             return True
