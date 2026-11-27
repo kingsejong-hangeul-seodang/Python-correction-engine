@@ -5,7 +5,9 @@ Gemini Flash로 결과 화면 위 킹세종 말풍선을 학습자에게 맞는 
 
 입출력
 - 입력: 요청(req), 묶은 결과(AggregateResult)
-  LLM에는 정답 문장, 틀린 곳 설명(엔진이 칸별 errors로 만든 템플릿 문장), 언어만 넘긴다 (정진님 명세 4번).
+  LLM에는 틀린 곳 설명(엔진이 칸별 errors로 만든 템플릿 문장), 정답 획에서 뽑은 바른 획순, 언어만 넘긴다
+  (정진님 명세 4번).
+  중수·고수는 정답 문장과 글자·띄어쓰기 설명을 보내지 않는다 (답을 말풍선에 말해 버리지 않게).
   학습자 손글씨·세션 정보는 보내지 않는다.
 - 출력: SejongMessage(source = llm). 아래 경우에는 None → feedback_templates.sejong_message를 쓴다
     - GEMINI_API_KEY가 없음 (config.py)
@@ -23,30 +25,38 @@ from typing import Any
 from pydantic import BaseModel
 
 from app import config
-from app.schemas import GradeRequest, SejongMessage
-from app.services import feedback_templates
+from app.schemas import Explanation, GradeRequest, Mark, SejongMessage
+from app.services import feedback_templates, stroke_guide
 from app.services.aggregate import AggregateResult
 
 log = logging.getLogger(__name__)
 
 MAX_LEN = 60  # 말풍선 한 줄 최대 글자 수 (넘으면 화면이 깨질 수 있어 템플릿을 쓴다)
 
-SYSTEM = (
-    "You are King Sejong, the creator of Hangul, gently teaching Korean handwriting to a foreign learner "
-    "who just traced K-pop lyrics. Write a speech bubble with exactly two lines: "
-    "text = a short, warm first line (at most 20 characters); "
-    "sub_text = one sentence saying what to look at again (at most 40 characters). "
-    "There is always at least one mistake, so never say the writing is perfect or well done; "
-    "the first line gently encourages the learner (for example, that they are almost there). "
-    "Do not invent mistakes: mention only the mistakes given. Do not use quotation marks or emoji. "
-    "Write in the language requested."
-)
+SYSTEM = """You are King Sejong, the creator of Hangul, a warm teacher on the result screen of a Korean handwriting \
+app for foreign learners who trace K-pop lyrics. Write the speech bubble above the result as JSON with two fields.
 
-# 결과 한 줄 요약 (LLM이 칭찬·격려 정도를 판정과 맞추도록)
-_RESULT = {
-    False: "Some letters or spacing are wrong.",
-    True: "All letters and spacing are right, but the stroke order needs another look.",
-}
+text (at most 35 characters): first say concretely what is right and what is wrong, then end with a short \
+inviting question. Use the facts given (which letters, how many words differ).
+sub_text (at most 45 characters): one concrete next step.
+- Stroke order or missing/extra strokes: tell how to write that jamo using ONLY the "Correct strokes" line \
+given (you may mention just the first one or two strokes). Never change that order or direction, never add \
+strokes. If no "Correct strokes" line is given, do not describe strokes; tell them to follow the orange box.
+- Wrong letters or spacing at stage intermediate or advanced: do NOT reveal the answer. Never write any word \
+or letter of the sentence, neither the wrong one nor the right one. Tell the learner where to look (the red boxes).
+- Wrong letters or spacing at stage beginner: you may say which letter to fix.
+
+Rules: mention only the mistakes given, never invent others. Never say the writing is perfect. \
+No quotation marks around the whole line, no emoji. Write in the language requested. \
+Polite, friendly modern Korean (해요체) when the language is Korean.
+
+Examples (Korean):
+- beginner, letters all right, stroke order wrong in 다 (ㄷ):
+  Correct strokes of ㄷ in 다: 1 가로획 (왼→오), 2 꺾인 획 (아래로 꺾어 오른쪽으로)
+  {"text": "글자는 다 맞았어요. 다의 ㄷ 쓰는 순서만 볼까요?",
+   "sub_text": "ㄷ은 가로획을 먼저, 그다음 아래로 꺾어 써요."}
+- intermediate, 1 of 2 words wrong:
+  {"text": "한 어절이 달라요. 다시 써 볼까요?", "sub_text": "빨간 상자 안에서 어느 글자가 다른지 찾아보세요."}"""
 
 
 class _Bubble(BaseModel):
@@ -99,18 +109,53 @@ def _ask(prompt: str) -> _Bubble | None:
     return parsed if isinstance(parsed, _Bubble) else None
 
 
+MAX_GUIDES = 2  # 획순 쓰는 법은 앞쪽 칸 두 개까지만 넘긴다 (말풍선 한 줄에 다 못 담음)
+
+
+def _prompt(req: GradeRequest, result: AggregateResult, mistakes: list[Explanation]) -> str:
+    """LLM에 줄 사실들: 단계, 어절 몇 개 중 몇 개가 틀렸는지, 글자·띄어쓰기가 맞았는지, 틀린 곳, 바른 획순.
+
+    중수·고수는 글자·띄어쓰기 답을 숨기는 단계라, 그 설명 문장(정답이 들어 있음)은 보내지 않고 개수만 보낸다.
+    획순 쓰는 법은 Gemini가 지어내지 않게 정답 획에서 뽑아 준다 (stroke_guide).
+    """
+    en = req.locale == "en"
+    beginner = req.stage.value == "beginner"
+    wrong_words = [w.text for w in result.words if not w.correct]
+    hidden = [m for m in mistakes if m.kind != Mark.STROKE and not beginner]
+    lines = [
+        f"Language: {'English' if en else 'Korean'}",
+        f"Stage: {req.stage.value}",
+        f"Words: {len(result.words)}, wrong words: {len(wrong_words)}"
+        + (f" ({', '.join(wrong_words)})" if beginner and wrong_words else ""),
+        "Letters and spacing: " + ("all right" if result.correct else "some are wrong"),
+    ]
+    if beginner:
+        lines.insert(2, f"Target sentence: {req.target}")
+    if hidden:
+        kinds = sorted({"letters" if m.kind == Mark.CHAR else "spacing" for m in hidden})
+        lines.append(f"Hidden mistakes (answer must stay secret): {len(hidden)} in {' and '.join(kinds)}, in red boxes")
+    lines.append("Mistakes:")
+    lines += [f"- {m.text}" for m in mistakes if m not in hidden]
+    errors = {c.index: c.errors for c in result.cells}
+    guides = 0
+    for m in mistakes:
+        if m.kind != Mark.STROKE or m.jamo is None or m.right is None or guides >= MAX_GUIDES:
+            continue
+        role = next((e.role.value for e in errors.get(m.cell_indexes[0], []) if e.jamo == m.jamo and e.role), None)
+        if (how := stroke_guide.guide(m.right, m.jamo, role, en)) is not None:
+            lines.append(f"Correct strokes of {m.jamo} in {m.right}: {how}")
+            guides += 1
+    return "\n".join(lines)
+
+
 def sejong_line(req: GradeRequest, result: AggregateResult) -> SejongMessage | None:
     """킹세종 말투 한마디. 실패하거나 쓸 필요가 없으면 None."""
     if not config.GEMINI_API_KEY:
         return None
-    mistakes = [e.text for e in feedback_templates.explanations(req, result)]
+    mistakes = feedback_templates.explanations(req, result)
     if not mistakes:
         return None
-    language = "English" if req.locale == "en" else "Korean"
-    prompt = (
-        f"Language: {language}\nTarget sentence: {req.target}\nResult: {_RESULT[result.correct]}\nMistakes:\n"
-        + "\n".join(f"- {m}" for m in mistakes)
-    )
+    prompt = _prompt(req, result, mistakes)
     future = _pool.submit(_ask, prompt)
     try:
         bubble = future.result(timeout=config.LLM_TIMEOUT_MS / 1000)

@@ -259,7 +259,9 @@ def test_llm_bubble_is_used_when_it_answers(monkeypatch):
         "expression": "regret",
         "source": "llm",
     }
-    assert "나 너 좋아하냐?" in prompt and "나너는 나 너로 띄어 써요." in prompt  # 정답과 틀린 곳만 보냄
+    # 고수는 답을 숨기는 단계라 정답 문장·띄어쓰기 설명은 보내지 않고 개수만 보낸다
+    assert "나 너 좋아하냐?" not in prompt and "나너는 나 너로 띄어 써요." not in prompt
+    assert "Hidden mistakes" in prompt and "in spacing" in prompt
 
 
 @pytest.mark.parametrize(
