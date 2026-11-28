@@ -15,3 +15,10 @@ LLM_MODEL = os.getenv(
 # (서버가 엔진을 최대 10초 기다리므로, 판정 시간(글자 인식 획 비교로 30칸이면 약 3초)·첫 요청 사전 읽기를 더해도
 # 그 안에 끝나게)
 LLM_TIMEOUT_MS = int(os.getenv("LLM_TIMEOUT_MS", "5000"))
+
+# 글자 인식 2차 읽기 (services/gemini_reader.py): 엔진이 애매하게 본 칸만 Gemini에게 그림으로 다시 읽힌다.
+# 키가 있으면 켜져 있다. 끄려면 LLM_READ=off. 칸 그림(손글씨)이 Google로 간다 (무료 등급은 Google이 개선에 쓸 수 있음)
+LLM_READ = os.getenv("LLM_READ", "on").lower() != "off"
+# 이 시간 안에 답이 없으면 엔진 결과 그대로. 보통 약 1초.
+# 판정(30칸 약 3초) + 이것 + 말풍선(LLM_TIMEOUT_MS)이 서버 대기 시간 안에 들어오게 둔다
+LLM_READ_TIMEOUT_MS = int(os.getenv("LLM_READ_TIMEOUT_MS", "3000"))

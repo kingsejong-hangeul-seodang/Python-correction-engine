@@ -25,12 +25,14 @@ app/
 │       └── jamo_templates.py  # 획순 템플릿, 자모 구성, 글자 집합 (hangul.py와는 별개)
 └── services/
     ├── recognizer.py          # 칸별 글자 인식
+    ├── gemini_reader.py       # 글자 인식 2차 읽기: 애매한 칸만 Gemini에게 그림으로 (키 있을 때)
     ├── stroke_checker.py      # 획 수·획순·방향 (SCF + 헝가리안)
     ├── stroke_balance.py      # 글자·자모 크기와 위치 (BALANCE, stroke_checker가 부름)
     ├── spacing_align.py       # 문장 정렬, 띄어쓰기
     ├── aggregate.py           # 단계별 결과 묶기
     ├── feedback_templates.py  # 설명 문장, 킹세종 템플릿
-    └── llm_feedback.py        # 킹세종 LLM 한마디
+    ├── llm_feedback.py        # 킹세종 LLM 한마디
+    └── stroke_guide.py        # 정답 획 → 바른 획순 문장 (말풍선 획순 팁의 사실)
 data/
 ├── fonts/                     # 정답 폰트 파일 (기본 DONGGUK-UNIVERSITY.ttf)
 └── extracted/<폰트 id>/       # 폰트에서 뽑은 조합 재료 (docs/extracted_data.md). 폰트 id = 파일 이름
@@ -139,6 +141,7 @@ tests/
 요청
  │
  ├─① recognize      칸마다 "무슨 글자를 썼나?"          → 후보 목록  [("십", 0.6), ("싶", 0.3)]
+ │   └ reread       애매한 칸만 모아 Gemini에게 한 번 더 (1번 호출, 키 없거나 실패면 그대로)
  ├─② align          정답 문장과 칸을 줄 맞춤              → 칸별 정답 글자, 띄어쓰기 오류
  ├─③ check_strokes  글자가 맞은 칸만 "순서대로 썼나?"     → 획순 오류, 획 짝
  ├─④ aggregate      ①②③을 화면용으로 묶기                → 칸 색(mark), 어절 결과, correct·perfect
@@ -151,6 +154,7 @@ tests/
 | 단계 | 함수 | 파일 | 담당 | 받는 것 | 주는 것 |
 | --- | --- | --- | --- | --- | --- |
 | ① 글자 인식 | `recognize` | `services/recognizer.py` | 혁윤 | 칸, 칸 크기, 올 수 있는 정답 글자 | 칸 종류(빈 칸·점·글자) + 점수 높은 순 후보 |
+| ① 2차 읽기 | `reread` | `services/gemini_reader.py` | 혁윤 | 요청, ①의 결과 전부, 칸별 정답 글자 | 같은 결과 (Gemini가 정답 글자로 읽고 엔진 후보 5개 안이면 그 칸만 인정) |
 | ② 줄 맞춤 | `align` | `services/spacing_align.py` | 혁윤 | 정답 문장, 단계, ①의 결과 전부 | 칸별 정답 글자·맞음 여부, 띄어쓰기 오류 |
 | ③ 획순 | `check_strokes` | `services/stroke_checker.py` (+ `stroke_balance.py`) | 정진 | 정답 글자, 칸 크기, 학습자 획 | 통과 여부, 획순·균형 오류, 획 짝, 걸린 시간 |
 | ④ 묶기 | `aggregate` | `services/aggregate.py` | 혁윤 | 요청, ①②③ 결과 | 칸 결과, 줄 맞춤, 어절 결과, correct·perfect |
@@ -249,7 +253,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 | 이름 | 기본값 | 설명 |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | 없음 | 있으면 킹세종 말풍선을 Gemini로 만든다. 없으면 템플릿 말풍선. **깃에 올리지 않는다**. 결제를 연결하지 않은 프로젝트의 키여야 무료 등급으로 쓴다 (결제가 필요한 프로젝트면 402) |
+| `GEMINI_API_KEY` | 없음 | 있으면 킹세종 말풍선을 Gemini로 만들고, 글자 인식 2차 읽기도 쓴다. 없으면 템플릿 말풍선, 엔진 인식만. **깃에 올리지 않는다**. 결제를 연결하지 않은 프로젝트의 키여야 무료 등급으로 쓴다 (결제가 필요한 프로젝트면 402) |
 | `LLM_MODEL` | `gemini-3.5-flash-lite` | 쓸 Gemini 모델 (무료 등급 있음, 약 2초). 무료 등급이 없는 모델이면 402. `gemini-flash-latest`는 무료가 아닌 모델을 가리킬 수 있어 쓰지 않는다 |
 | `LLM_TIMEOUT_MS` | `5000` | 이 시간 안에 Gemini 답이 없으면 기다리지 않고 템플릿 말풍선. 키가 있으면 `/grade`가 최대 이만큼 늘 수 있다. 서버가 엔진을 기다리는 시간(10초)보다 충분히 짧게 둔다 |
+| `LLM_READ` | `on` | 키가 있을 때 글자 인식 2차 읽기를 쓸지. `off`면 끈다. 켜면 애매한 칸 그림(손글씨)이 Google로 간다 (무료 등급은 Google이 서비스 개선에 쓸 수 있음) |
+| `LLM_READ_TIMEOUT_MS` | `3000` | 2차 읽기를 기다리는 시간 (보통 약 1초). 넘으면 엔진 결과 그대로. 판정(30칸 약 3초) + 이것 + `LLM_TIMEOUT_MS`가 서버 대기 시간 안에 들어오게 둔다 |
 | `ENGINE_VERSION` | `0.1.0-stub` | 응답의 `engineVersion` |

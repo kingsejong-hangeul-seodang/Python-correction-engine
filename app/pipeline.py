@@ -2,6 +2,7 @@
 
 흐름 (README '입력과 출력 한눈에 보기' 2번):
     1. recognizer      (D-01, 혁윤)  칸마다 무슨 글자를 썼나 (recognize)
+       gemini_reader   (D-01, 혁윤)  애매한 칸만 모아 Gemini에게 그림으로 한 번 더 읽힘 (키 없거나 실패면 그대로)
     2. spacing_align   (D-02, 혁윤)  정답과 줄 맞춤 → alignment, 글자·띄어쓰기 오류
     3. stroke_checker  (D-04, 정진)  글자가 맞은 한글 칸만 획순·균형 판정
     4. aggregate       (D-03, 혁윤)  mark, words, correct, perfect
@@ -27,7 +28,7 @@ from app.config import ENGINE_VERSION
 from app.core import reference
 from app.core.stroke_vectorizer.compose import composed_path
 from app.schemas import Explanation, GradeRequest, GradeResponse, SejongMessage, Stage
-from app.services import feedback_templates, llm_feedback, spacing_align, stroke_checker
+from app.services import feedback_templates, gemini_reader, llm_feedback, spacing_align, stroke_checker
 from app.services.aggregate import AggregateResult, aggregate, needs_stroke_check
 from app.services.recognizer import Candidate, CellKind, Recognition, recognize
 from app.services.spacing_align import AlignmentResult
@@ -106,17 +107,23 @@ def _recognitions(req: GradeRequest) -> list[Recognition]:
 
     chars = [ch for ch in req.target if ch != " "]
     out: list[Recognition] = []
+    expected_of: list[list[str]] = []
     for cell, fallback in zip(req.cells, assumed, strict=True):
         if req.stage == Stage.ADVANCED:
             expected = chars
         else:
             expected = [chars[cell.index]] if cell.index < len(chars) else []
+        expected_of.append(expected)
         try:
             out.append(recognize(cell, req.canvas, expected))
         except Exception:
             log.exception("글자 인식 중 오류, 이 칸은 정답 글자를 썼다고 가정함: 칸 %d", cell.index)
             out.append(fallback)
-    return out
+    try:
+        return gemini_reader.reread(req, out, expected_of)
+    except Exception:
+        log.exception("글자 2차 읽기 오류, 엔진 결과를 씀")
+        return out
 
 
 def _assumed_recognitions(req: GradeRequest) -> list[Recognition]:
