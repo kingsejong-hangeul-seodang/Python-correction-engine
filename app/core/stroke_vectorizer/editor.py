@@ -5,8 +5,9 @@
 
 화면에서 획을 고르고 점을 끌어 옮긴 뒤 저장하면 data/extracted/<폰트>/tweaks.json에 이동량이 저장된다.
 범위: "이 글자만" 또는 "같은 자리 전체"(예: 받침 있는 ㅝ 전부). 반영 방식: docs/extracted_data.md
-"자모 모양 그대로 쓰기": 그 자모를 모든 글자에서 자모 단독 모양 그대로 자리 박스에 넣는다
-(tweaks.json "mode", 체크하면 바로 저장)
+"자모 방식" (tweaks.json "mode", 고르면 바로 저장): 그 자모를 모든 글자에서
+  자모 모양 그대로 (jamo)      자모 단독 모양 그대로 자리 박스에 넣는다
+  부품마다 단독 자모 (base)    겹자모만. 부품 박스마다 부품의 단독 자모 모양 (ㅀ → ㄹ, ㅎ)
 다 고친 뒤 python -m app.core.stroke_vectorizer.compose --all 로 정답 획 사전을 다시 만들어야 서버에 반영된다.
 """
 
@@ -29,10 +30,11 @@ from app.core.stroke_vectorizer.compose import (
     sub_base,
     tweak_summary,
 )
-from app.core.stroke_vectorizer.jamo_templates import all_syllables, decompose, ksx1001
+from app.core.stroke_vectorizer.jamo_templates import PIECES, all_syllables, decompose, ksx1001
 
 HERE = Path(__file__).parent
 KSX = set(ksx1001())
+EDITOR_MODES = (None, "jamo", "base")  # 편집기에서 고를 수 있는 자모 방식 (None = 자동, box_mode.json)
 
 
 def slot_of(syl):
@@ -47,7 +49,8 @@ def syl_view(prof, syl):
     strokes = compose(syl, prof.id, meta=True, use_tweaks=False, use_fixed_mode=True)
     for s in strokes:
         s["slot_d"], s["syl_d"] = deltas_for(prof.tweaks, s["slot"], s["idx"], syl, s["order"])
-        s["fixed"] = fixed_mode(prof.tweaks, s["jamo"]) == "jamo"
+        s["fixed_mode"] = fixed_mode(prof.tweaks, s["jamo"])  # None / "jamo" / "base"
+        s["compound"] = len(PIECES.get(s["jamo"], [s["jamo"]])) > 1  # 겹자모 (base를 고를 수 있음)
         del s["points"]
     return {"syl": syl, "strokes": strokes}
 
@@ -139,9 +142,13 @@ class Handler(BaseHTTPRequestHandler):
                 p.save_tweaks()
                 self.send(syl_view(p, syl))
             elif u.path == "/api/mode":
-                # body: {"syl", "jamo", "fixed": bool, "clear_slot": bool} → 자모 방식 고정/해제, 바로 저장
-                jamo = body["jamo"]
-                set_fixed_mode(p.tweaks, jamo, "jamo" if body["fixed"] else None)
+                # body: {"syl", "jamo", "mode": null|"jamo"|"base", "clear_slot": bool} → 자모 방식 고정/해제, 바로 저장
+                jamo, mode = body["jamo"], body.get("mode")
+                if mode not in EDITOR_MODES:
+                    raise ValueError(f"mode는 {EDITOR_MODES} 중 하나: {mode}")
+                if mode == "base" and len(PIECES.get(jamo, [jamo])) < 2:
+                    raise ValueError(f"{jamo}는 겹자모가 아니라 base를 쓸 수 없음")
+                set_fixed_mode(p.tweaks, jamo, mode)
                 if body.get("clear_slot"):  # 기준 모양이 바뀌어 기존 자리 이동량이 어긋나므로
                     for k in slot_tweaks_of(p, jamo):
                         del p.tweaks["slot"][k]

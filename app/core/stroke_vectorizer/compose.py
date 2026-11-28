@@ -21,6 +21,7 @@ import numpy as np
 from app.core.stroke_vectorizer.jamo_templates import (
     CHO,
     JUNG,
+    PIECES,
     all_syllables,
     decompose,
     ksx1001,
@@ -255,7 +256,11 @@ def is_fallback(key):
 #   stroke 획마다 측정된 박스                                  키: <자리>|s<획>
 #   초성 자리 키에는 자음이 없어서(cho|ㅏ|0 = 모든 초성) 부품·획 키에는 자음을 붙인다: cho|ㅏ|0|ㅂ|s2
 # 그 자리에 측정값이 없으면(표본 < MIN_N) 자모 박스(① 칸 배치)로 돌아간다.
-MODES = ("jamo", "piece", "stroke")
+MODES = ("jamo", "piece", "stroke")  # extract mode 단계가 자동으로 고르는 방식
+# tweaks.json "mode"로만 고르는 방식 (자동 선택 대상 아님)
+#   base  겹자모: 부품 박스마다 그 부품의 단독 자모 모양(ㅀ → ㄹ, ㅎ)을 넣음.
+#         겹자모 글리프에서 부품이 작아져 추출이 틀어졌을 때 쓴다 (예: 동국체 ㅀ의 ㅎ 꼭지)
+FIXED_ONLY_MODES = ("base",)
 FLAT = 0.05  # 부품·획 점의 bbox 한 변이 자모 프레임에서 이보다 작으면 그 축은 0.5 (ㅡ·ㅣ 등)
 
 
@@ -373,14 +378,37 @@ def to_box(pts_list, box, flat=None):
     return [np.c_[x0 + p[:, 0] * (x1 - x0), y0 + p[:, 1] * (y1 - y0)] for p in pts_list]
 
 
+def base_strokes(prof, jamo):
+    """겹자모 → 부품마다 단독 자모 모양을 그 부품이 차지하던 박스에 맞춘 획 (jamo_strokes 형식, 자모 프레임)
+    부품 박스는 겹자모 추출 모양의 부품별 bbox. 단독 자모와 획 수가 다른 부품은 추출 모양 그대로 둔다.
+    겹자모가 아니면 추출 모양 그대로"""
+    strokes = prof.jamo[jamo]
+    pieces = PIECES.get(jamo, [jamo])
+    if len(pieces) < 2:
+        return strokes
+    out = []
+    for pi, base in enumerate(pieces):
+        mine = [s for s in strokes if s["unit"] == f"p{pi}"]
+        src = prof.jamo.get(base)
+        if not mine or not src or len(src) != len(mine):
+            out += mine
+            continue
+        allp = np.vstack([s["points"] for s in mine])
+        pts = to_box([np.array(s["points"]) for s in src], [*allp.min(0), *allp.max(0)])
+        out += [{**m, "points": np.round(p, 4).tolist()} for m, p in zip(mine, pts, strict=True)]
+    return out
+
+
 def place_jamo(prof, role, jamo, jung, has_jong, mode=None, slots=None, detail=None):
     """자모 하나를 자리에 놓기 (①②) → [(점들, 키)]
-    mode: None = box_mode.json"""
+    mode: None = box_mode.json / "base" = 단독 자모 모양을 부품 박스(없으면 자모 박스)에"""
     slots = prof.slots if slots is None else slots
     detail = prof.detail if detail is None else detail
     strokes = prof.jamo[jamo]
-    raw = [np.array(s["points"]) for s in strokes]
     m = mode or prof.box_mode.get(jamo, "jamo")
+    if m == "base":
+        strokes, m = base_strokes(prof, jamo), "piece"
+    raw = [np.array(s["points"]) for s in strokes]
 
     if m == "stroke":  # ② 획마다
         sb = lookup_strokes(detail, role, jamo, jung, has_jong, len(strokes))
@@ -448,10 +476,11 @@ def jamo_box(jamo, font=None):
 
 def compose_jamo(jamo, font=None, box=None):
     """자모 단독 글자 (초보 자모 연습: ㄱ, ㅏ …) → [{"order", "jamo", "role", "points"}] (0~1 글자 프레임)
-    jamo_strokes 모양을 그 폰트의 자모 글리프 상자에 맞춰 놓는다"""
+    jamo_strokes 모양을 그 폰트의 자모 글리프 상자에 맞춰 놓는다 (tweaks.json mode가 base면 base_strokes 모양)"""
     prof = get_profile(font)
     box = jamo_box(jamo, font) if box is None else box
-    pts = to_box([np.array(s["points"]) for s in prof.jamo[jamo]], box)
+    strokes = base_strokes(prof, jamo) if fixed_mode(prof.tweaks, jamo) == "base" else prof.jamo[jamo]
+    pts = to_box([np.array(s["points"]) for s in strokes], box)
     role = jamo_role(jamo)
     return [{"order": i + 1, "jamo": jamo, "role": role, "points": np.round(p, 4).tolist()} for i, p in enumerate(pts)]
 

@@ -66,8 +66,13 @@
     <div id="strokeList"></div>
     <div class="info" id="selInfo"></div>
     <div class="info">
-      <label title="이 자모가 들어간 모든 글자·자리에서 자모 단독 모양을 자리 박스에 그대로 넣습니다 (누르면 바로 저장)">
-        <input id="fixedMode" type="checkbox"> <b id="fixedJamo"></b> 자모 모양 그대로 쓰기 (모든 글자)
+      <label title="이 자모가 들어간 모든 글자·자리에 적용합니다 (고르면 바로 저장)">
+        <b id="fixedJamo"></b> 자모 방식 (모든 글자)
+        <select id="fixedMode">
+          <option value="">자동 (측정으로 고른 방식)</option>
+          <option value="jamo">자모 모양 그대로</option>
+          <option value="base">부품마다 단독 자모 (겹자모)</option>
+        </select>
       </label>
     </div>
     <div class="info">
@@ -191,20 +196,21 @@ function renderStrokeList() {
     : "획을 고르세요.";
   $("fixedJamo").textContent = s ? s.jamo : "";
   $("fixedMode").disabled = !s;
-  $("fixedMode").checked = !!(s && s.fixed);
+  $("fixedMode").value = (s && s.fixed_mode) || "";
+  $("fixedMode").querySelector('option[value="base"]').disabled = !(s && s.compound);
 }
 
 async function toggleFixedMode() {
-  const s = data.strokes.find(s => s.order === sel), fixed = $("fixedMode").checked;
+  const s = data.strokes.find(s => s.order === sel), mode = $("fixedMode").value || null;
   if (!s) return;
   if (dirty.size && !confirm("저장하지 않은 점 조정이 있습니다. 버리고 바꿀까요?")) { render(); return; }
   let clear = false;
-  if (fixed) {
+  if (mode) {
     const r = await api(`/api/slot_tweaks?jamo=${encodeURIComponent(s.jamo)}`);
     if (r.slots.length)
       clear = confirm(`${s.jamo}의 자리 점 조정 ${r.slots.length}개(${r.slots.join(", ")})는 기준 모양이 바뀌어 어긋납니다. 지울까요?\n(취소 = 남겨 둠)`);
   }
-  data = await api("/api/mode", {syl: data.syl, jamo: s.jamo, fixed, clear_slot: clear});
+  data = await api("/api/mode", {syl: data.syl, jamo: s.jamo, mode, clear_slot: clear});
   work = {}; dirty.clear(); undoStack = [];
   for (const t of data.strokes) work[t.order] = {slot_d: clone(t.slot_d || zeros()), syl_d: clone(t.syl_d || zeros())};
   await selectStroke(sel); renderTweaks();
@@ -238,9 +244,11 @@ function renderStatus() {
 
 async function renderTweaks() {
   const t = await api("/api/tweaks");
-  const syl = Object.keys(t.syllable), slot = Object.keys(t.slot), fixed = Object.keys(t.mode || {});
+  const syl = Object.keys(t.syllable), slot = Object.keys(t.slot), modes = Object.entries(t.mode || {});
+  const byMode = m => modes.filter(([, v]) => v === m).map(([j]) => j).join(" ") || "-";
   $("tweakList").innerHTML =
-    `<div>자모 모양 그대로: ${fixed.join(" ") || "-"}</div>` +
+    `<div>자모 모양 그대로: ${byMode("jamo")}</div>` +
+    `<div>부품마다 단독 자모: ${byMode("base")}</div>` +
     `<div>글자 ${syl.length}개: ${syl.map(c => `<span data-c="${c}">${c}</span>`).join("") || "-"}</div>` +
     `<div>자리 ${slot.length}개: ${slot.map(k => `<span data-slot="${k}">${k} (${t.slot[k].map(i => +i + 1).join(",")}획)</span>`).join("") || "-"}</div>`;
   $("tweakList").querySelectorAll("span[data-c]").forEach(e => e.onclick = () => load(e.dataset.c));
